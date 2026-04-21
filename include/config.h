@@ -13,24 +13,24 @@
 
 // ===== MAPPING VHODOV =====
 // Prvi SN65HVS882 (IN0-IN7)
-#define IN_S1_ROCNO         0   // Stikalo S1 - Ročno
-#define IN_S1_AVTOMATSKO    1   // Stikalo S1 - Avtomatsko  
-#define IN_RESET            2   // Tipka Reset
-#define IN_S41_DOL          3   // Tipka S41 - Vreteno dol
-#define IN_S42_GOR          4   // Tipka S42 - Vreteno gor
-#define IN_STEVEC_OBRATOV   5   // Števec obratov motorja vretena
-#define IN_NAKLON_VRETENA   6   // Stikalo naklona (< 10°)
-#define IN_RESERVED_0       7   // Rezerva
+#define IN_S43_SAFETY       0   // S43 - Varnostno končno stikalo vretena v spodnjem položaju (0°)
+#define IN_S42_GOR          1   // S42 - Tipka vreteno gor
+#define IN_S41_DOL          2   // S41 - Tipka vreteno dol
+#define IN_S45_STEVEC       3   // S45 - Števec obratov motorja vretena
+#define IN_S44_NAKLON       4   // S44 - Stikalo naklona (< 10°)
+#define IN_S1_ROCNO         5   // S1 - Ročno
+#define IN_S1_AVTOMATSKO    6   // S1 - Avtomatsko
+#define IN_RESET            7   // Reset tipka
 
-// Drugi SN65HVS882 (IN8-IN15) - za S2 preklopnik
-#define IN_S2_POS1          8   // S2 pozicija 1 cikel
-#define IN_S2_POS2          9   // S2 pozicija 2 cikla
-#define IN_S2_POS3          10  // S2 pozicija 3 cikli
-#define IN_S2_POS4          11  // S2 pozicija 4 cikli
-#define IN_S2_POS5          12  // S2 pozicija 5 ciklov
-#define IN_S2_POS6          13  // S2 pozicija 6 ciklov
-#define IN_S2_NEPREKINJEN   14  // S2 neprekinjeni cikli
-#define IN_RESERVED_1       15  // Rezerva
+// Drugi SN65HVS882 (IN8-IN15) - S2 preklopnik za cikle
+#define IN_S2_NEPREKINJEN   8   // S2 - Neprekinjeni cikli
+#define IN_S2_7_CIKLOV      9   // S2 - 7 ciklov
+#define IN_S2_6_CIKLOV      10  // S2 - 6 ciklov
+#define IN_S2_5_CIKLOV      11  // S2 - 5 ciklov
+#define IN_S2_4_CIKLI       12  // S2 - 4 cikli
+#define IN_S2_3_CIKLI       13  // S2 - 3 cikli
+#define IN_S2_2_CIKLA       14  // S2 - 2 cikla
+#define IN_USER             15  // User vhod - rezerva za prihodnost
 
 // ===== ENUMERACIJE =====
 enum S1Mode {
@@ -41,17 +41,28 @@ enum S1Mode {
 
 enum S2Cycles {
     CYCLES_NONE = 0,
-    CYCLES_1 = 1,
     CYCLES_2 = 2,
     CYCLES_3 = 3,
     CYCLES_4 = 4,
     CYCLES_5 = 5,
     CYCLES_6 = 6,
-    CYCLES_CONTINUOUS = 7
+    CYCLES_7 = 7,
+    CYCLES_CONTINUOUS = 99
 };
 
 // ===== DEBOUNCE NASTAVITVE =====
 #define DEBOUNCE_DELAY_MS   50  // Anti-bounce za tipke
+
+// ===== I2C PINS za AS5600 Magnetic Encoder =====
+#define I2C_SDA         8       // GPIO8 - SDA
+#define I2C_SCL         9       // GPIO9 - SCL
+#define I2C_FREQUENCY   400000  // 400 kHz (fast mode)
+
+// ===== AS5600 NASTAVITVE =====
+#define AS5600_ADDRESS      0x36    // I2C adresa AS5600
+#define USE_AS5600_FOR_TILT true    // true = uporabi AS5600, false = uporabi S44 stikalo
+#define TILT_ANGLE_THRESHOLD 10.0   // Kot pri katerem se aktivira "tilt" signal (stopinje)
+#define ANGLE_HYSTERESIS     0.5    // Histereza za preprečitev tresenja (stopinje)
 
 // ===== GPIO IZHODI =====
 // Releji (preko 2N7002 tranzistorjev)

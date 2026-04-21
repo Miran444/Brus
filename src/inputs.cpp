@@ -7,6 +7,9 @@ BrusInputs::BrusInputs() {
     lastCounterState = false;
     tempAlarm = false;
     
+    // Inicializacija AS5600
+    angleEncoder = new AS5600();
+    
     // Inicializacija debounce
     for (int i = 0; i < 16; i++) {
         lastDebounceTime[i] = 0;
@@ -26,6 +29,13 @@ void BrusInputs::begin() {
     pinMode(TEMP_ALARM, INPUT);
     
     Serial.println("BrusInputs inicializiran - SPI ready");
+    
+    // Inicializacija I2C za AS5600
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClock(I2C_FREQUENCY);
+    
+    // Inicializacija AS5600
+    angleEncoder->begin(&Wire);
     
     // Prvo branje
     update();
@@ -83,8 +93,11 @@ void BrusInputs::update() {
     lastInputState = inputState;
     inputState = readSN65HVS882();
     
+    // Posodobi AS5600 encoder
+    angleEncoder->update();
+    
     // Števec obratov - detekcija naraščajočega robu
-    bool currentCounter = getInputBit(IN_STEVEC_OBRATOV);
+    bool currentCounter = getInputBit(IN_S45_STEVEC);
     if (currentCounter && !lastCounterState) {
         revolutionCount++;
     }
@@ -110,23 +123,23 @@ S1Mode BrusInputs::getS1Mode() {
 
 // ===== STIKALO S2 - CYCLES =====
 S2Cycles BrusInputs::getS2Cycles() {
-    // Beremo vse pozicije S2
-    bool pos1 = getInputDebounced(IN_S2_POS1);
-    bool pos2 = getInputDebounced(IN_S2_POS2);
-    bool pos3 = getInputDebounced(IN_S2_POS3);
-    bool pos4 = getInputDebounced(IN_S2_POS4);
-    bool pos5 = getInputDebounced(IN_S2_POS5);
-    bool pos6 = getInputDebounced(IN_S2_POS6);
+    // Beremo vse pozicije S2 (nova konfiguracija)
     bool continuous = getInputDebounced(IN_S2_NEPREKINJEN);
+    bool cycles7 = getInputDebounced(IN_S2_7_CIKLOV);
+    bool cycles6 = getInputDebounced(IN_S2_6_CIKLOV);
+    bool cycles5 = getInputDebounced(IN_S2_5_CIKLOV);
+    bool cycles4 = getInputDebounced(IN_S2_4_CIKLI);
+    bool cycles3 = getInputDebounced(IN_S2_3_CIKLI);
+    bool cycles2 = getInputDebounced(IN_S2_2_CIKLA);
     
     // Dekodiranje - samo ena pozicija je aktivna
-    if (pos1) return CYCLES_1;
-    if (pos2) return CYCLES_2;
-    if (pos3) return CYCLES_3;
-    if (pos4) return CYCLES_4;
-    if (pos5) return CYCLES_5;
-    if (pos6) return CYCLES_6;
     if (continuous) return CYCLES_CONTINUOUS;
+    if (cycles7) return CYCLES_7;
+    if (cycles6) return CYCLES_6;
+    if (cycles5) return CYCLES_5;
+    if (cycles4) return CYCLES_4;
+    if (cycles3) return CYCLES_3;
+    if (cycles2) return CYCLES_2;
     
     return CYCLES_NONE;
 }
@@ -154,7 +167,33 @@ bool BrusInputs::isS42UpPressed() {
 
 // ===== SENZORJI =====
 bool BrusInputs::isSpindleTilted() {
-    return getInputBit(IN_NAKLON_VRETENA);
+    // Izbira vira: AS5600 ali S44 stikalo
+    if (USE_AS5600_FOR_TILT && angleEncoder->isSensorPresent()) {
+        // Uporabi AS5600 magnetic encoder
+        return angleEncoder->isTiltAngleReached();
+    } else {
+        // Uporabi S44 stikalo kot fallback
+        return getInputBit(IN_S44_NAKLON);
+    }
+}
+
+bool BrusInputs::isSpindleAtBottom() {
+    // S43 - varnostno končno stikalo pri ~0° (spodnji položaj)
+    return getInputBit(IN_S43_SAFETY);
+}
+
+// ===== AS5600 FUNKCIJE =====
+float BrusInputs::getSpindleAngle() {
+    if (angleEncoder->isSensorPresent()) {
+        return angleEncoder->getCalibratedAngle();
+    }
+    return -1.0; // Napaka
+}
+
+void BrusInputs::calibrateAngleZero() {
+    if (angleEncoder->isSensorPresent()) {
+        angleEncoder->calibrateZero();
+    }
 }
 
 unsigned long BrusInputs::getRevolutions() {

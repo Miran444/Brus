@@ -116,7 +116,7 @@ void loop() {
         autoCycle.startContinuous();
         autoModeActive = true;
       } 
-      else if (cycles >= CYCLES_1 && cycles <= CYCLES_6) {
+      else if (cycles >= CYCLES_2 && cycles <= CYCLES_7) {
         autoCycle.start(cycles);
         autoModeActive = true;
       }
@@ -132,6 +132,12 @@ void loop() {
     if (mode == MODE_MANUAL) {
       // V ROČNEM načinu: reset števca obratov (potrditev začetnega kota)
       inputs.resetRevolutions();
+      
+      // Če je AS5600 prisoten, kalibriraj tudi encoder
+      if (USE_AS5600_FOR_TILT && inputs.getAngleEncoder()->isSensorPresent()) {
+        inputs.calibrateAngleZero();
+      }
+      
       Serial.println("*** RESET - Števec obratov ponastavljen ***");
       Serial.println("Začetni kot potrjen! Preklopite na AUTO za začetek.");
     } else {
@@ -178,6 +184,13 @@ void loop() {
       Serial.print(" | Rev: ");
       Serial.print(inputs.getRevolutions());
       Serial.print("  ");
+      
+      // Prikaz kota iz AS5600 (če je prisoten)
+      if (USE_AS5600_FOR_TILT && inputs.getAngleEncoder()->isSensorPresent()) {
+        Serial.print("| Angle: ");
+        Serial.print(inputs.getSpindleAngle(), 1);
+        Serial.print("° ");
+      }
       
       // Prikaz aktivnih komponent
       if (outputs.isGrindingMotorOn()) Serial.print("[MOTOR] ");

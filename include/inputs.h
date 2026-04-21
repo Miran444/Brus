@@ -4,12 +4,16 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "config.h"
+#include "as5600.h"
 
 class BrusInputs {
 private:
     SPIClass* spi;
     uint16_t inputState;        // 16 bitov za oba SN65HVS882
     uint16_t lastInputState;    // Za detekcijo sprememb
+    
+    // AS5600 magnetic encoder
+    AS5600* angleEncoder;
     
     // Debounce za tipke
     unsigned long lastDebounceTime[16];
@@ -44,9 +48,15 @@ public:
     bool isS42UpPressed();
     
     // Branje senzorjev
-    bool isSpindleTilted();     // Naklon < 10°
+    bool isSpindleTilted();     // Naklon < 10° (AS5600 ali S44)
+    bool isSpindleAtBottom();   // Spodnji položaj ~0° (S43 - varnostno)
     unsigned long getRevolutions(); // Števec obratov
     void resetRevolutions();
+    
+    // AS5600 funkcije
+    AS5600* getAngleEncoder() { return angleEncoder; }
+    float getSpindleAngle();    // Vrne trenutni kot vretena
+    void calibrateAngleZero();  // Kalibracija začetnega kota
     
     // Temperatura alarm
     bool isTempAlarm();

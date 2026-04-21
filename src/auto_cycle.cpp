@@ -88,8 +88,15 @@ void AutoCycle::processStateDown() {
         Serial.println(startRevolutions);
     }
     
-    // Preveri ali smo dosegli naklon < 10°
+    // Preveri ali smo dosegli naklon < 10° (S44 ali S43 za varnost)
     bool tiltNow = inputs->isSpindleTilted();
+    bool safetyBottom = inputs->isSpindleAtBottom();
+    
+    // Če je dosežen S43 (spodnji položaj), je to kritični alarm
+    if (safetyBottom && !tiltReached) {
+        Serial.println("!!! ALARM - S43 VARNOSTNO STIKALO AKTIVIRANO - S44 morda NE DELUJE!");
+        // Nadaljuj z normalno logiko, ampak zabeleži alarm
+    }
     
     // Debounce za zanesljivo detekcijo
     if (tiltNow && !tiltReached) {
@@ -100,7 +107,7 @@ void AutoCycle::processStateDown() {
             unsigned long currentRev = inputs->getRevolutions();
             targetRevolutions = currentRev - startRevolutions;
             
-            Serial.print("!!! DOSEŽEN NAKLON < 10° | Obrати za spust: ");
+            Serial.print("!!! DOSEŽEN NAKLON < 10° | Obrati za spust: ");
             Serial.println(targetRevolutions);
             
             // Ustavi vreteno in začni z dvigom

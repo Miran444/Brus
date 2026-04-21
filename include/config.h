@@ -81,4 +81,19 @@ enum SpindleDirection {
     SPINDLE_UP = 1      // Vreteno se dviga
 };
 
+// ===== AVTOMATSKI CIKEL - STANJA =====
+enum CycleState {
+    CYCLE_IDLE = 0,         // Neaktivno
+    CYCLE_STARTING,         // Začetek cikla - vklop izhodov
+    CYCLE_DOWN,             // Vreteno se spušča do < 10°
+    CYCLE_UP,               // Vreteno se dviga nazaj
+    CYCLE_COMPLETE,         // Cikel končan
+    CYCLE_ERROR             // Napaka
+};
+
+// ===== AVTOMATSKI CIKEL - PARAMETRI =====
+#define AUTO_SPINDLE_SPEED      180     // Hitrost vretena v avtomatskem načinu
+#define STARTUP_DELAY_MS        1000    // Zakasnitev ob začetku cikla (motor kamna, črpalka)
+#define TILT_DEBOUNCE_MS        100     // Debounce za stikalo naklona
+
 #endif // CONFIG_H

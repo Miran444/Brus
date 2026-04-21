@@ -64,6 +64,12 @@ enum S2Cycles {
 #define TILT_ANGLE_THRESHOLD 10.0   // Kot pri katerem se aktivira "tilt" signal (stopinje)
 #define ANGLE_HYSTERESIS     0.5    // Histereza za preprečitev tresenja (stopinje)
 
+// ===== UART PINS za Nextion Display =====
+#define NEXTION_TX      17      // GPIO17 - TX (ESP32 -> Nextion RX)
+#define NEXTION_RX      18      // GPIO18 - RX (ESP32 <- Nextion TX)
+#define NEXTION_BAUD    115200  // Baudrate za Nextion
+#define NEXTION_UPDATE_INTERVAL 200  // Interval posodabljanja zaslona (ms)
+
 // ===== GPIO IZHODI =====
 // Releji (preko 2N7002 tranzistorjev)
 #define OUT_MOTOR_KAMEN     10  // GPIO10 - Kontaktor trifaznega motorja brusnega kamna

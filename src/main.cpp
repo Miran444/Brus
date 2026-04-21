@@ -2,12 +2,14 @@
 #include "inputs.h"
 #include "outputs.h"
 #include "auto_cycle.h"
+#include "nextion.h"
 #include "config.h"
 
 // Globalni objekti
 BrusInputs inputs;
 BrusOutputs outputs;
 AutoCycle autoCycle(&inputs, &outputs);
+NextionDisplay display;
 
 // Časovniki
 unsigned long lastPrintTime = 0;
@@ -36,14 +38,22 @@ void setup() {
   // Inicializacija avtomatskega cikla
   autoCycle.begin();
   
+  // Inicializacija Nextion displaya
+  display.begin();
+  
   Serial.println("Sistem pripravljen!");
   Serial.println("ROČNI NAČIN: Nastavite začetni kot (22-27°) in pritisnite RESET");
   Serial.println();
 }
 
 void loop() {
+  unsigned long currentMillis = millis();
+  
   // Posodobi vhode
   inputs.update();
+  
+  // Posodobi Nextion display
+  display.update(currentMillis);
   
   // Trenutni način delovanja
   S1Mode mode = inputs.getS1Mode();
@@ -161,6 +171,7 @@ void loop() {
   if (millis() - lastPrintTime > PRINT_INTERVAL) {
     lastPrintTime = millis();
     
+    // Serial output
     Serial.print("Mode: ");
     switch(mode) {
       case MODE_OFF:    Serial.print("OFF     "); break;
@@ -168,17 +179,26 @@ void loop() {
       case MODE_AUTO:   Serial.print("AUTO    "); break;
     }
     
+    // Nextion display update
+    const char* modeStr = (mode == MODE_OFF) ? "OFF" : (mode == MODE_MANUAL) ? "MANUAL" : "AUTO";
+    display.setMode(modeStr);
+    
     if (mode == MODE_AUTO && autoCycle.isRunning()) {
       Serial.print("| ");
       autoCycle.printStatus();
+      
+      // Nextion - cikli
+      display.setCycles(autoCycle.getCompletedCycles(), autoCycle.getTargetCycles());
     } else {
       Serial.print("| Cycles: ");
       S2Cycles cycles = inputs.getS2Cycles();
       if (cycles == CYCLES_CONTINUOUS) {
         Serial.print("CONT");
+        display.setCycles(0, 99);  // 99 = continuous
       } else {
         Serial.print(cycles);
         Serial.print("   ");
+        display.setCycles(0, cycles);
       }
       
       Serial.print(" | Rev: ");
@@ -187,9 +207,13 @@ void loop() {
       
       // Prikaz kota iz AS5600 (če je prisoten)
       if (USE_AS5600_FOR_TILT && inputs.getAngleEncoder()->isSensorPresent()) {
+        float angle = inputs.getSpindleAngle();
         Serial.print("| Angle: ");
-        Serial.print(inputs.getSpindleAngle(), 1);
+        Serial.print(angle, 1);
         Serial.print("° ");
+        
+        // Nextion - kot
+        display.setAngle(angle);
       }
       
       // Prikaz aktivnih komponent
@@ -209,6 +233,32 @@ void loop() {
       if (inputs.isTempAlarm()) Serial.print("[TEMP!] ");
       
       Serial.println();
+    }
+    
+    // Nextion - število obratov
+    display.setRevolutions(inputs.getRevolutions());
+    
+    // Nextion - status motorjev
+    display.setMotorStatus(
+      outputs.isGrindingMotorOn(),
+      outputs.isWaterPumpOn(),
+      outputs.isKnifePusherOn()
+    );
+    
+    // Nextion - status vretena
+    display.setSpindleStatus(
+      outputs.isSpindleMoving(),
+      outputs.getSpindleDirection() == SPINDLE_UP,
+      outputs.getSpindleSpeed()
+    );
+    
+    // Nextion - alarmi
+    if (inputs.isTempAlarm()) {
+      display.setAlarm("TEMPERATURA ALARM!");
+    } else if (autoCycle.hasError()) {
+      display.setAlarm(autoCycle.getErrorMessage().c_str());
+    } else {
+      display.clearAlarm();
     }
   }
   

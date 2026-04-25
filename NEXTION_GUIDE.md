@@ -223,11 +223,55 @@ Ko boste ustvarili Page 1, jo lahko uporabite za:
 - Gumb za vrnitev na Page 0
 
 **Osnovna struktura Page 1:**
-1. Kliknite na **Page 1** (ali ustvarite novo)
-2. Dodajte button za vrnitev:
-   - objname: `bBack`
-   - txt: `◀ NAZAJ`
-   - Touch Event: `page 0`
+
+### Xfloat za vnos začetnega kota:
+1. Toolbox → **Xfloat**
+2. Position: **X=50, Y=80, W=150, H=60**
+3. Properties:
+   - **objname**: `xStartAngle`
+   - **id**: 5 (Component ID)
+   - **vvs0**: 1 (omogoči numeric keyboard)
+   - **vvs1**: 1 (ena decimalna mesta)
+   - **minval**: 0
+   - **maxval**: 300 (30.0° * 10)
+   - **val**: 50 (privzeto 5.0°)
+
+### Xfloat za vnos končnega kota:
+1. Toolbox → **Xfloat**
+2. Position: **X=250, Y=80, W=150, H=60**
+3. Properties:
+   - **objname**: `xEndAngle`
+   - **id**: 6
+   - **vvs0**: 1
+   - **vvs1**: 1
+   - **minval**: 0
+   - **maxval**: 300
+   - **val**: 280 (privzeto 28.0°)
+
+### Button za shranjevanje:
+1. Toolbox → **Button**
+2. Position: **X=150, Y=180, W=180, H=60**
+3. Properties:
+   - **objname**: `bSave`
+   - **id**: 7
+   - **txt**: `SHRANI`
+
+**Touch Release Event za bSave:**
+```
+print "ID5:"
+print xStartAngle.val
+print ";ID6:"
+print xEndAngle.val
+printh ff ff ff
+```
+
+### Button za nazaj:
+1. Toolbox → **Button**
+2. Position: **X=10, Y=10, W=100, H=40**
+3. Properties:
+   - **objname**: `bBack`
+   - **txt**: `◀ NAZAJ`
+   - **Touch Event**: `page 0`
 
 ---
 
@@ -323,8 +367,11 @@ V Serial Monitoru bi morali videti podatke, Nextion pa jih bo prikazal.
 ## 9. SEZNAM FUNKCIJ V ESP32 KODI
 
 ```cpp
+#include <Preferences.h>
+
 // Inicializacija
 display.begin();
+Preferences preferences;
 
 // Nastavitve prikaza
 display.setMode("AUTO");                    // OFF, MANUAL, AUTO
@@ -345,12 +392,36 @@ display.setButtonState("bDol", true);
 display.setBrusState(true);                 // Zelena barva = aktiven
 display.setPnevState(false);                // Siva = neaktiven
 
-// Branje touch eventov
+// Branje touch eventov in custom stringov
 if (display.available()) {
     uint8_t buttonId = display.readTouchEvent();
-    // Reagiraj na pritisk
+    
+    if (buttonId == 7) {  // bSave pritisnjen
+        String data = display.readString();  // "ID5:357;ID6:80"
+        float startAngle, endAngle;
+        
+        if (display.parseAngleSettings(data, startAngle, endAngle)) {
+            // Shrani v Preferences
+            preferences.begin("brus", false);
+            preferences.putFloat("angleStart", startAngle);
+            preferences.putFloat("angleStop", endAngle);
+            preferences.end();
+            
+            // Posodobi prikaz
+            display.setAngleRange(startAngle, endAngle);
+        }
+    }
 }
+
+// Nalaganje shranjenih vrednosti ob zagonu
+preferences.begin("brus", false);
+float angleStart = preferences.getFloat("angleStart", 5.0);
+float angleStop = preferences.getFloat("angleStop", 28.0);
+preferences.end();
+display.setAngleRange(angleStart, angleStop);
 ```
+
+**Primer celotne implementacije:** Glej `examples/nextion_angle_settings.cpp`
 
 ---
 

@@ -244,6 +244,78 @@ uint8_t NextionDisplay::readTouchEvent() {
     return 0;
 }
 
+String NextionDisplay::readString() {
+    // Prebere custom string iz Nextiona
+    // Format: ASCII znaki do 0xFF 0xFF 0xFF
+    String result = "";
+    unsigned long timeout = millis() + 1000;  // 1 sekunda timeout
+    int ffCount = 0;
+    
+    while (millis() < timeout) {
+        if (serial->available()) {
+            uint8_t c = serial->read();
+            
+            if (c == 0xFF) {
+                ffCount++;
+                if (ffCount >= 3) {
+                    break;  // Konec stringa
+                }
+            } else {
+                ffCount = 0;
+                result += (char)c;
+            }
+        }
+    }
+    
+    return result;
+}
+
+bool NextionDisplay::parseAngleSettings(String data, float &startAngle, float &endAngle) {
+    // Parsira string formata "ID5:357;ID6:80"
+    // ID5:357 = 35.7°, ID6:80 = 8.0°
+    
+    Serial.print("Parsing string: ");
+    Serial.println(data);
+    
+    int id5Pos = data.indexOf("ID5:");
+    int id6Pos = data.indexOf("ID6:");
+    
+    if (id5Pos == -1 || id6Pos == -1) {
+        Serial.println("ERROR: Invalid format - missing ID5 or ID6");
+        return false;
+    }
+    
+    // Najdi separatorje
+    int semicolonPos = data.indexOf(";", id5Pos);
+    
+    if (semicolonPos == -1) {
+        Serial.println("ERROR: Missing semicolon separator");
+        return false;
+    }
+    
+    // Ekstrahiraj vrednosti
+    String startStr = data.substring(id5Pos + 4, semicolonPos);  // "ID5:" = 4 znaki
+    String endStr = data.substring(id6Pos + 4);  // "ID6:" = 4 znaki
+    
+    // Odstrani morebitne neželene znake na koncu
+    endStr.trim();
+    
+    // Konvertiraj v float (vrednost je *10)
+    int startVal = startStr.toInt();
+    int endVal = endStr.toInt();
+    
+    startAngle = startVal / 10.0;
+    endAngle = endVal / 10.0;
+    
+    Serial.print("Parsed: Start=");
+    Serial.print(startAngle);
+    Serial.print("°, End=");
+    Serial.print(endAngle);
+    Serial.println("°");
+    
+    return true;
+}
+
 void NextionDisplay::update(unsigned long currentMillis) {
     // Periodična posodobitev - ne preobremeniti UART
     if (currentMillis - lastUpdateTime < NEXTION_UPDATE_INTERVAL) {

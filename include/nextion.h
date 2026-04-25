@@ -55,6 +55,8 @@ public:
     // Branje dogodkov (touch events)
     bool available();
     uint8_t readTouchEvent();
+    String readString();  // Prebere string iz Nextiona
+    bool parseAngleSettings(String data, float &startAngle, float &endAngle);
     
     // Debug
     void test();

@@ -18,11 +18,12 @@ private:
     uint8_t lastCycles;
     uint8_t lastCompletedCycles;
     float lastAngle;
-    unsigned long lastRevolutions;
-    bool lastMotorState;
-    bool lastPumpState;
-    bool lastKnifeState;
+    String lastStatus;
+    bool lastBrusState;
+    bool lastPnevState;
     bool lastSpindleMoving;
+    float lastAngleStart;
+    float lastAngleStop;
     
     // Helper funkcije
     void sendCommand(const char* cmd);
@@ -36,13 +37,14 @@ public:
     
     // Pošiljanje podatkov na display
     void setMode(const char* mode);           // "OFF", "MANUAL", "AUTO"
+    void setStatus(const char* status);       // "Stop", "Pripravljen", "Run", "Alarm"
     void setCycles(uint8_t current, uint8_t target);
     void setAngle(float angle);
-    void setRevolutions(unsigned long rev);
-    void setMotorStatus(bool grinding, bool pump, bool knife);
+    void setAngleRange(float angleStart, float angleStop);
+    void setButtonState(const char* button, bool enabled);
+    void setBrusState(bool active);
+    void setPnevState(bool active);
     void setSpindleStatus(bool moving, bool directionUp, uint8_t speed);
-    void setAlarm(const char* message);
-    void clearAlarm();
     
     // Pošiljanje komand
     void showPage(uint8_t pageId);            // Preklapljanje med zasloni

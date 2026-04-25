@@ -9,11 +9,12 @@ NextionDisplay::NextionDisplay() {
     lastCycles = 0;
     lastCompletedCycles = 0;
     lastAngle = -999.0;
-    lastRevolutions = 0;
-    lastMotorState = false;
-    lastPumpState = false;
-    lastKnifeState = false;
+    lastStatus = "";
+    lastBrusState = false;
+    lastPnevState = false;
     lastSpindleMoving = false;
+    lastAngleStart = -999.0;
+    lastAngleStop = -999.0;
 }
 
 void NextionDisplay::begin() {
@@ -117,35 +118,75 @@ void NextionDisplay::setAngle(float angle) {
         sprintf(buffer, "%.1f°", angle);
         setText("tAngle", buffer);
         
-        // Številčna vrednost za gauge/progress
-        setNumber("nAngle", (int32_t)angle);
-        
         lastAngle = angle;
     }
 }
 
-void NextionDisplay::setRevolutions(unsigned long rev) {
-    if (rev != lastRevolutions) {
-        setNumber("nRev", (int32_t)rev);
-        lastRevolutions = rev;
+void NextionDisplay::setAngleRange(float angleStart, float angleStop) {
+    if (abs(angleStart - lastAngleStart) > 0.1) {
+        char buffer[16];
+        sprintf(buffer, "%.1f", angleStart);
+        setText("xAngleStart", buffer);
+        lastAngleStart = angleStart;
+    }
+    
+    if (abs(angleStop - lastAngleStop) > 0.1) {
+        char buffer[16];
+        sprintf(buffer, "%.1f", angleStop);
+        setText("xAngleStop", buffer);
+        lastAngleStop = angleStop;
     }
 }
 
-void NextionDisplay::setMotorStatus(bool grinding, bool pump, bool knife) {
-    // Ikone ali LED indikatorji (sprememba barve/slike)
-    if (grinding != lastMotorState) {
-        setNumber("picMotor", grinding ? 1 : 0);  // Slika 0=OFF, 1=ON
-        lastMotorState = grinding;
+void NextionDisplay::setStatus(const char* status) {
+    if (String(status) != lastStatus) {
+        setText("tStatus", status);
+        lastStatus = String(status);
+        
+        // Spremeni barvo ozadja glede na stanje
+        if (strcmp(status, "Stop") == 0) {
+            sendCommand("tStatus.bco=63488");  // Rdeča
+        } else if (strcmp(status, "Pripravljen") == 0) {
+            sendCommand("tStatus.bco=1024");   // Modra
+        } else if (strcmp(status, "Run") == 0) {
+            sendCommand("tStatus.bco=2016");   // Zelena
+        } else {
+            // Vse ostalo (vključno z alarm sporočili) = rdeča
+            sendCommand("tStatus.bco=63488");  // Rdeča
+        }
     }
-    
-    if (pump != lastPumpState) {
-        setNumber("picPump", pump ? 1 : 0);
-        lastPumpState = pump;
+}
+
+void NextionDisplay::setButtonState(const char* button, bool enabled) {
+    // Omogoči/onemogoči button (za ročni način)
+    serial->print("tsw ");
+    serial->print(button);
+    serial->print(",");
+    serial->print(enabled ? "1" : "0");
+    endCommand();
+}
+
+void NextionDisplay::setBrusState(bool active) {
+    if (active != lastBrusState) {
+        // Spremeni barvo buttona (pco = text color)
+        if (active) {
+            sendCommand("bBrus.bco=2016");  // Zelena ko je aktiven
+        } else {
+            sendCommand("bBrus.bco=50712"); // Siva ko ni aktiven
+        }
+        lastBrusState = active;
     }
-    
-    if (knife != lastKnifeState) {
-        setNumber("picKnife", knife ? 1 : 0);
-        lastKnifeState = knife;
+}
+
+void NextionDisplay::setPnevState(bool active) {
+    if (active != lastPnevState) {
+        // Spremeni barvo buttona
+        if (active) {
+            sendCommand("bPnev.bco=2016");  // Zelena ko je aktiven
+        } else {
+            sendCommand("bPnev.bco=50712"); // Siva ko ni aktiven
+        }
+        lastPnevState = active;
     }
 }
 
@@ -168,16 +209,6 @@ void NextionDisplay::setSpindleStatus(bool moving, bool directionUp, uint8_t spe
     
     // Hitrost
     setProgress("jSpeed", (speed * 100) / 255);  // Progress bar 0-100%
-}
-
-void NextionDisplay::setAlarm(const char* message) {
-    setText("tAlarm", message);
-    sendCommand("tAlarm.pco=63488");  // Rdeča barva teksta
-    sendCommand("vis tAlarm,1");      // Prikaži alarm
-}
-
-void NextionDisplay::clearAlarm() {
-    sendCommand("vis tAlarm,0");  // Skrij alarm
 }
 
 // ===== BRANJE DOGODKOV =====

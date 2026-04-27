@@ -226,6 +226,39 @@ ESP32 bo preko kode spremenil barvo texta: `bBrus.pco=0` (aktiven - črna) ali `
 
 ---
 
+### Korak 8a: Button bSave za shranjevanje kotov (Page 0)
+
+**Button SAVE:**
+1. Toolbox → **Button**
+2. Position: **X=10, Y=200, W=80, H=60**
+3. Properties:
+   - **objname**: `bSave`
+   - **txt**: `SAVE`
+   - **font**: size 2
+   - **pco**: 65535
+   - **bco**: 1024 (modra)
+
+**Touch Press Event za bSave (Page 0):**
+1. Desni klik na **bSave** → **Event**
+2. Nastavite **Send Component ID** na **enabled** (ID=7)
+3. V **Touch Press Event** pustite prazno (ESP32 bo prejel ID=7)
+
+**Logika shranjevanja:**
+1. **Prvi pritisk**: Shrani trenutni kot kot **Start angle**
+   - Display prikaže: "Nastavi Stop kot"
+   - Globalna spremenljivka `vaAngleStart` se posodobi
+2. **Drugi pritisk**: Shrani trenutni kot kot **Stop angle**
+   - Display prikaže: "Koti shranjeni!"
+   - Globalna spremenljivka `vaAngleStop` se posodobi
+   - Koti se shranijo v ESP32 NVS (Preferences)
+3. **Tretji pritisk**: Resetira proces - začne znova od koraka 1
+
+**Reset kotov:**
+- Fizična tipka **RESET** (IN_RESET) briše vse shranjene kote
+- Po pritisku RESET morate ponovno nastaviti Start in Stop kot
+
+---
+
 ### Korak 9: Button Settings (zgoraj desno)
 1. Toolbox → **Button**
 2. Position: **X=420, Y=10, W=60, H=40**

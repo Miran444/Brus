@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Preferences.h>
 #include "inputs.h"
 #include "outputs.h"
 #include "auto_cycle.h"
@@ -11,6 +12,7 @@ BrusInputs inputs;
 BrusOutputs outputs;
 AutoCycle autoCycle(&inputs, &outputs);
 NextionDisplay display;
+Preferences preferences;
 
 // Časovniki
 unsigned long lastPrintTime = 0;
@@ -29,10 +31,18 @@ bool bDolPressed = false;    // bDol - vreteno dol (pritisnjeno)
 // AS5600 senzor kota
 AS5600 angleSensor;
 
+// Shranjeni koti (v stopinjah)
+float savedAngleStart = 0.0;
+float savedAngleStop = 0.0;
+bool anglesConfigured = false;  // Ali sta kota nastavljena
+
 // Deklaracije funkcij
 void handleNextionEvents();
 void handleTouchPress(uint8_t componentId);
 void handleTouchRelease(uint8_t componentId);
+void loadAnglesFromPreferences();
+void saveAnglesToPreferences();
+void clearAnglesFromPreferences();
 
 void setup() {
   // Inicializacija Serial komunikacije
@@ -68,8 +78,11 @@ void setup() {
   display.setBrusState(false);
   display.setPnevState(false);
   
+  // Naloži shranjene kote iz NVS
+  loadAnglesFromPreferences();
+  
   Serial.println("Sistem pripravljen!");
-  Serial.println("ROČNI NAČIN: Nastavite začetni kot (22-27°) in pritisnite RESET");
+  Serial.println("ROČNI NAČIN: Nastavite začetni in končni kot, ter pritisnite bSave na displayu");
   Serial.println();
 }
 
@@ -139,6 +152,51 @@ void handleTouchPress(uint8_t componentId) {
       display.setPnevState(pnevActive);
       Serial.print("[bPnev] Ventil noža: ");
       Serial.println(pnevActive ? "ON" : "OFF");
+      break;
+      
+    case 7:   // bSave - shrani začetni in končni kot
+      {
+        // Shrani trenutni kot iz AS5600
+        float currentAngle = angleSensor.getCalibratedAngle();
+        
+        // Če še nimamo začetnega kota, shrani kot Start
+        if (savedAngleStart == 0.0) {
+          savedAngleStart = currentAngle;
+          Serial.print("[bSave] Začetni kot shranjen: ");
+          Serial.print(savedAngleStart, 1);
+          Serial.println("°");
+          display.setStatus("Nastavi Stop kot");
+          display.setAngleRange(savedAngleStart, 0.0);
+        }
+        // Če imamo Start, shrani kot Stop
+        else if (savedAngleStop == 0.0) {
+          savedAngleStop = currentAngle;
+          Serial.print("[bSave] Končni kot shranjen: ");
+          Serial.print(savedAngleStop, 1);
+          Serial.println("°");
+          
+          // Shrani v Preferences (NVS)
+          saveAnglesToPreferences();
+          anglesConfigured = true;
+          
+          display.setStatus("Koti shranjeni!");
+          display.setAngleRange(savedAngleStart, savedAngleStop);
+          
+          Serial.println("*** KOTI KONFIGURIRANI - Sistem pripravljen ***");
+        }
+        // Če imamo oba, resetiraj in začni znova
+        else {
+          savedAngleStart = currentAngle;
+          savedAngleStop = 0.0;
+          anglesConfigured = false;
+          Serial.println("[bSave] Reset - nastavi nove kote");
+          Serial.print("Začetni kot: ");
+          Serial.print(savedAngleStart, 1);
+          Serial.println("°");
+          display.setStatus("Nastavi Stop kot");
+          display.setAngleRange(savedAngleStart, 0.0);
+        }
+      }
       break;
       
     default:
@@ -291,16 +349,17 @@ void loop() {
   // ===== RESET TIPKA =====
   if (inputs.isResetPressed()) {
     if (mode == MODE_MANUAL) {
-      // V ROČNEM načinu: reset števca obratov (potrditev začetnega kota)
-      inputs.resetRevolutions();
+      // V ROČNEM načinu: briše shranjene kote
+      clearAnglesFromPreferences();
+      savedAngleStart = 0.0;
+      savedAngleStop = 0.0;
+      anglesConfigured = false;
       
-      // Če je AS5600 prisoten, kalibriraj tudi encoder
-      if (USE_AS5600_FOR_TILT && inputs.getAngleEncoder()->isSensorPresent()) {
-        inputs.calibrateAngleZero();
-      }
+      display.setStatus("Koti izbrisani");
+      display.setAngleRange(0.0, 0.0);
       
-      Serial.println("*** RESET - Števec obratov ponastavljen ***");
-      Serial.println("Začetni kot potrjen! Preklopite na AUTO za začetek.");
+      Serial.println("*** RESET - Koti izbrisani ***");
+      Serial.println("Nastavite nove kote z gumbom bSave na displayu.");
     } else {
       // V ostalih načinih: emergency stop
       outputs.emergencyStop();
@@ -414,4 +473,54 @@ void loop() {
   }
   
   delay(10); // Kratka zakasnitev za stabilnost
+}
+
+// ===== FUNKCIJE ZA DELO S PREFERENCES (NVS) =====
+
+void loadAnglesFromPreferences() {
+  preferences.begin("brus", true); // Read-only mode
+  
+  savedAngleStart = preferences.getFloat("angleStart", 0.0);
+  savedAngleStop = preferences.getFloat("angleStop", 0.0);
+  
+  preferences.end();
+  
+  // Preveri ali sta kota nastavljena
+  if (savedAngleStart > 0.0 && savedAngleStop > 0.0) {
+    anglesConfigured = true;
+    Serial.println("Shranjeni koti naloženi iz NVS:");
+    Serial.print("  Start: ");
+    Serial.print(savedAngleStart, 1);
+    Serial.println("°");
+    Serial.print("  Stop: ");
+    Serial.print(savedAngleStop, 1);
+    Serial.println("°");
+    
+    // Posodobi display
+    display.setAngleRange(savedAngleStart, savedAngleStop);
+  } else {
+    anglesConfigured = false;
+    Serial.println("Koti niso nastavljeni - uporabite bSave za nastavitev");
+  }
+}
+
+void saveAnglesToPreferences() {
+  preferences.begin("brus", false); // Read-write mode
+  
+  preferences.putFloat("angleStart", savedAngleStart);
+  preferences.putFloat("angleStop", savedAngleStop);
+  
+  preferences.end();
+  
+  Serial.println("Koti shranjeni v NVS (Non-Volatile Storage)");
+}
+
+void clearAnglesFromPreferences() {
+  preferences.begin("brus", false); // Read-write mode
+  
+  preferences.clear(); // Briše vse shranjene vrednosti
+  
+  preferences.end();
+  
+  Serial.println("Vsi shranjeni podatki izbrisani iz NVS");
 }

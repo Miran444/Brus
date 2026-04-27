@@ -3,6 +3,7 @@
 #include "outputs.h"
 #include "auto_cycle.h"
 #include "nextion.h"
+#include "as5600.h"
 #include "config.h"
 
 // Globalni objekti
@@ -18,6 +19,20 @@ const unsigned long PRINT_INTERVAL = 1000; // Izpis vsako sekundo
 // Stanje sistema
 S1Mode lastMode = MODE_OFF;
 bool autoModeActive = false;
+
+// Stanje toggle gumbov (manual control)
+bool brusActive = false;     // bBrus - motor kamna
+bool pnevActive = false;     // bPnev - ventil noža
+bool bGorPressed = false;    // bGor - vreteno gor (pritisnjeno)
+bool bDolPressed = false;    // bDol - vreteno dol (pritisnjeno)
+
+// AS5600 senzor kota
+AS5600 angleSensor;
+
+// Deklaracije funkcij
+void handleNextionEvents();
+void handleTouchPress(uint8_t componentId);
+void handleTouchRelease(uint8_t componentId);
 
 void setup() {
   // Inicializacija Serial komunikacije
@@ -38,12 +53,130 @@ void setup() {
   // Inicializacija avtomatskega cikla
   autoCycle.begin();
   
+  // Inicializacija AS5600 senzorja
+  Wire.begin(I2C_SDA, I2C_SCL);
+  if (angleSensor.begin(&Wire)) {
+    Serial.println("AS5600 senzor inicializiran");
+  } else {
+    Serial.println("NAPAKA: AS5600 senzor ni najden!");
+  }
+  
   // Inicializacija Nextion displaya
   display.begin();
+  
+  // Nastavi začetno stanje gumbov
+  display.setBrusState(false);
+  display.setPnevState(false);
   
   Serial.println("Sistem pripravljen!");
   Serial.println("ROČNI NAČIN: Nastavite začetni kot (22-27°) in pritisnite RESET");
   Serial.println();
+}
+
+// ===== OBDELAVA NEXTION TOUCH EVENTS =====
+void handleNextionEvents() {
+  while (display.available()) {
+    // Preberi prvi byte da ugotovimo tip dogodka
+    uint8_t eventType = Serial2.peek();
+    
+    if (eventType == 0x65) {
+      // Touch Press Event
+      uint8_t pressId = display.readTouchEvent();
+      if (pressId > 0) {
+        handleTouchPress(pressId);
+      }
+    } 
+    else if (eventType == 0x66) {
+      // Touch Release Event
+      uint8_t releaseId = display.readTouchReleaseEvent();
+      if (releaseId > 0) {
+        handleTouchRelease(releaseId);
+      }
+    }
+    else {
+      // Neznan dogodek - preberi in zavrzi
+      Serial2.read();
+    }
+  }
+}
+
+void handleTouchPress(uint8_t componentId) {
+  Serial.print("Touch Press: ");
+  Serial.println(componentId);
+  
+  S1Mode mode = inputs.getS1Mode();
+  
+  // Akcije samo v MANUAL načinu
+  if (mode != MODE_MANUAL) {
+    Serial.println("Gumbi delujejo samo v MANUAL načinu!");
+    return;
+  }
+  
+  switch(componentId) {
+    case 17:  // bGor - začni premik gor
+      Serial.println("[bGor] Vreteno GOR - START");
+      bGorPressed = true;
+      outputs.moveSpindleUp(SPINDLE_SPEED_MEDIUM);
+      break;
+      
+    case 18:  // bDol - začni premik dol
+      Serial.println("[bDol] Vreteno DOL - START");
+      bDolPressed = true;
+      outputs.moveSpindleDown(SPINDLE_SPEED_MEDIUM);
+      break;
+      
+    case 19:  // bBrus - toggle motor kamna
+      brusActive = !brusActive;
+      outputs.setGrindingMotor(brusActive);
+      display.setBrusState(brusActive);
+      Serial.print("[bBrus] Motor kamna: ");
+      Serial.println(brusActive ? "ON" : "OFF");
+      break;
+      
+    case 20:  // bPnev - toggle ventil noža
+      pnevActive = !pnevActive;
+      outputs.setKnifePusher(pnevActive);
+      display.setPnevState(pnevActive);
+      Serial.print("[bPnev] Ventil noža: ");
+      Serial.println(pnevActive ? "ON" : "OFF");
+      break;
+      
+    default:
+      Serial.print("Neznan gumb ID: ");
+      Serial.println(componentId);
+      break;
+  }
+}
+
+void handleTouchRelease(uint8_t componentId) {
+  Serial.print("Touch Release: ");
+  Serial.println(componentId);
+  
+  S1Mode mode = inputs.getS1Mode();
+  
+  // Akcije samo v MANUAL načinu
+  if (mode != MODE_MANUAL) {
+    return;
+  }
+  
+  switch(componentId) {
+    case 17:  // bGor - ustavi premik
+      Serial.println("[bGor] Vreteno GOR - STOP");
+      bGorPressed = false;
+      outputs.stopSpindle();
+      break;
+      
+    case 18:  // bDol - ustavi premik
+      Serial.println("[bDol] Vreteno DOL - STOP");
+      bDolPressed = false;
+      outputs.stopSpindle();
+      break;
+      
+    // bBrus (19) in bPnev (20) sta toggle gumba - brez Release akcije
+    
+    default:
+      break;
+  }
 }
 
 void loop() {
@@ -52,8 +185,17 @@ void loop() {
   // Posodobi vhode
   inputs.update();
   
+  // Posodobi AS5600 senzor
+  angleSensor.update();
+  
+  // Posodobi prikaz kota na Nextion zaslonu
+  display.setAngle(angleSensor.getCalibratedAngle());
+  
   // Posodobi Nextion display
   display.update(currentMillis);
+  
+  // Obdelaj Touch Events iz Nextiona
+  handleNextionEvents();
   
   // Trenutni način delovanja
   S1Mode mode = inputs.getS1Mode();
@@ -89,25 +231,34 @@ void loop() {
   
   // ===== ROČNI NAČIN =====
   else if (mode == MODE_MANUAL) {
-    // Kontrola vretena s tipkama S41/S42 (za nastavitev začetnega kota)
-    if (inputs.isS41DownPressed()) {
-      outputs.moveSpindleDown(SPINDLE_SPEED_MEDIUM);
+    // Kontrola vretena - fizične tipke (S41/S42) in Nextion gumbi (bGor/bDol) delujejo vzporedno
+    bool wantMoveDown = inputs.isS41DownPressed() || bDolPressed;
+    bool wantMoveUp = inputs.isS42UpPressed() || bGorPressed;
+    
+    if (wantMoveDown && !wantMoveUp) {
+      // Premik dol (prioriteta ima DOL, če sta obe pritisnjena)
+      if (!outputs.isSpindleMoving() || outputs.getSpindleDirection() != SPINDLE_DOWN) {
+        outputs.moveSpindleDown(SPINDLE_SPEED_MEDIUM);
+      }
     } 
-    else if (inputs.isS42UpPressed()) {
-      outputs.moveSpindleUp(SPINDLE_SPEED_MEDIUM);
+    else if (wantMoveUp && !wantMoveDown) {
+      // Premik gor
+      if (!outputs.isSpindleMoving() || outputs.getSpindleDirection() != SPINDLE_UP) {
+        outputs.moveSpindleUp(SPINDLE_SPEED_MEDIUM);
+      }
     } 
     else {
-      // Če nobena tipka ni pritisnjena, ustavi vreteno
+      // Nobena kontrola ni aktivna - ustavi vreteno
       if (outputs.isSpindleMoving()) {
         outputs.stopSpindle();
       }
     }
     
-    // V ROČNEM načinu so ostali izhodi onemogočeni
-    if (outputs.isGrindingMotorOn() || outputs.isWaterPumpOn() || outputs.isKnifePusherOn()) {
-      outputs.setGrindingMotor(false);
+    // V ROČNEM načinu motorji preko fizičnih tipk niso dovoljeni
+    // (samo preko Nextion gumbov bBrus/bPnev)
+    // Črpalka in nož ne smeta biti vklopljena v manual mode
+    if (outputs.isWaterPumpOn()) {
       outputs.setWaterPump(false);
-      outputs.setKnifePusher(false);
     }
     
     autoModeActive = false;

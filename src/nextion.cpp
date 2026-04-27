@@ -274,27 +274,50 @@ bool NextionDisplay::available() {
 }
 
 uint8_t NextionDisplay::readTouchEvent() {
-    // Preberi Nextion touch event
-    // Format: 0x65 + page_id + component_id + event_type + 0xFF 0xFF 0xFF
+    // Prebere Touch Press Event (0x65)
+    // Format: 0x65 0xPageID 0xComponentID 0x01 0xFF 0xFF 0xFF
     
-    if (serial->available() >= 7) {
-        if (serial->read() == 0x65) {  // Touch event header
-            uint8_t pageId = serial->read();
-            uint8_t componentId = serial->read();
-            uint8_t eventType = serial->read();  // 0x01 = Press, 0x00 = Release
-            
-            // Preveri končna 3x 0xFF
-            if (serial->read() == 0xFF && serial->read() == 0xFF && serial->read() == 0xFF) {
-                Serial.print("Touch event - Page: ");
-                Serial.print(pageId);
-                Serial.print(", Component: ");
-                Serial.print(componentId);
-                Serial.print(", Type: ");
-                Serial.println(eventType);
-                
-                return componentId;
-            }
-        }
+    if (!available()) return 0;
+    
+    uint8_t buf[7];
+    size_t len = serial->readBytes(buf, 7);
+    
+    if (len == 7 && buf[0] == 0x65 && buf[3] == 0x01 && 
+        buf[4] == 0xFF && buf[5] == 0xFF && buf[6] == 0xFF) {
+        uint8_t pageId = buf[1];
+        uint8_t componentId = buf[2];
+        
+        Serial.print("Touch Press Event - Page: ");
+        Serial.print(pageId);
+        Serial.print(", Component ID: ");
+        Serial.println(componentId);
+        
+        return componentId;
+    }
+    
+    return 0;
+}
+
+uint8_t NextionDisplay::readTouchReleaseEvent() {
+    // Prebere Touch Release Event (0x66)
+    // Format: 0x66 0xPageID 0xComponentID 0x00 0xFF 0xFF 0xFF
+    
+    if (!available()) return 0;
+    
+    uint8_t buf[7];
+    size_t len = serial->readBytes(buf, 7);
+    
+    if (len == 7 && buf[0] == 0x66 && buf[3] == 0x00 && 
+        buf[4] == 0xFF && buf[5] == 0xFF && buf[6] == 0xFF) {
+        uint8_t pageId = buf[1];
+        uint8_t componentId = buf[2];
+        
+        Serial.print("Touch Release Event - Page: ");
+        Serial.print(pageId);
+        Serial.print(", Component ID: ");
+        Serial.println(componentId);
+        
+        return componentId;
     }
     
     return 0;

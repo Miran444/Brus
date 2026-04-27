@@ -57,8 +57,9 @@ public:
     
     // Branje dogodkov (touch events)
     bool available();
-    uint8_t readTouchEvent();
-    String readString();  // Prebere string iz Nextiona
+    uint8_t readTouchEvent();                      // Prebere Touch Press event (vrne component ID)
+    uint8_t readTouchReleaseEvent();               // Prebere Touch Release event (vrne component ID)
+    String readString();                           // Prebere string iz Nextiona
     bool parseAngleSettings(String data, float &startAngle, float &endAngle);
     
     // Debug

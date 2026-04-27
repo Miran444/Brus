@@ -194,6 +194,38 @@ ESP32 bo preko kode spremenil barvo texta: `bBrus.pco=0` (aktiven - črna) ali `
 - **pco=0** - Črna (aktiven)
 - **pco=54970** - Siva (neaktiven)
 
+---
+
+### Touch Eventi za ročno upravljanje:
+
+**bGor (ID=17) - Vreteno GOR:**
+1. Desni klik na **bGor** → **Event**
+2. Nastavite **Send Component ID** na **enabled**
+3. V **Touch Press Event** pustite prazno (ESP32 bo prejel ID=17)
+4. V **Touch Release Event** pustite prazno (ESP32 bo prejel ID=17)
+
+**bDol (ID=18) - Vreteno DOL:**
+1. Desni klik na **bDol** → **Event**
+2. Nastavite **Send Component ID** na **enabled**
+3. V **Touch Press Event** pustite prazno (ESP32 bo prejel ID=18)
+4. V **Touch Release Event** pustite prazno (ESP32 bo prejel ID=18)
+
+**bBrus (ID=19) - Motor kamna (toggle):**
+1. Desni klik na **bBrus** → **Event**
+2. Nastavite **Send Component ID** na **enabled**
+3. V **Touch Press Event** pustite prazno (ESP32 bo prejel ID=19 ob vsakem pritisku)
+
+**bPnev (ID=20) - Ventil noža (toggle):**
+1. Desni klik na **bPnev** → **Event**
+2. Nastavite **Send Component ID** na **enabled**
+3. V **Touch Press Event** pustite prazno (ESP32 bo prejel ID=20 ob vsakem pritisku)
+
+**Delovanje:**
+- **bGor/bDol**: Med držanjem gumba se motor vretena premika, ob spustitvi se ustavi. Trenutni kot se prikazuje v `tAngle`.
+- **bBrus/bPnev**: Toggle gumba - enkrat pritisnemo = vklopi, ponovno pritisnemo = izklopi. Barva ozadja se spremeni (zelena=aktiven, siva=neaktiven).
+
+---
+
 ### Korak 9: Button Settings (zgoraj desno)
 1. Toolbox → **Button**
 2. Position: **X=420, Y=10, W=60, H=40**

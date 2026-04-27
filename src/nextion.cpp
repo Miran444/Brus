@@ -169,16 +169,22 @@ void NextionDisplay::setAngle(float angle) {
 void NextionDisplay::setAngleRange(float angleStart, float angleStop) {
     if (abs(angleStart - lastAngleStart) > 0.1) {
         char buffer[16];
-        sprintf(buffer, "%.1f", angleStart);
-        setText("xAngleStart", buffer);
+        sprintf(buffer, "%.1f\xB0", angleStart);  // \xB0 = ° znak
+        setText("tAngleStart", buffer);
         lastAngleStart = angleStart;
+        
+        // Nastavi tudi globalno spremenljivko (int * 10)
+        setGlobalVariable("vaAngleStart", (int32_t)(angleStart * 10));
     }
     
     if (abs(angleStop - lastAngleStop) > 0.1) {
         char buffer[16];
-        sprintf(buffer, "%.1f", angleStop);
-        setText("xAngleStop", buffer);
+        sprintf(buffer, "%.1f\xB0", angleStop);  // \xB0 = ° znak
+        setText("tAngleStop", buffer);
         lastAngleStop = angleStop;
+        
+        // Nastavi tudi globalno spremenljivko (int * 10)
+        setGlobalVariable("vaAngleStop", (int32_t)(angleStop * 10));
     }
 }
 

@@ -49,8 +49,8 @@ void loadReferenceData() {
     Serial.printf("  Čas cikla: %d s\n", refData.cycleTime / 1000);
     
     // Posodobi globalne spremenljivke v Nextion
-    display.setGlobalVariable("tMaxAngle", (int32_t)(refData.maxAngle * 10));
-    display.setGlobalVariable("tMinAngle", (int32_t)(refData.minAngle * 10));
+    display.setGlobalVariable("vaMaxAngle", (int32_t)(refData.maxAngle * 10));
+    display.setGlobalVariable("vaMinAngle", (int32_t)(refData.minAngle * 10));
     display.setGlobalVariable("tRevPerAngle", refData.revPerAngle);
     display.setGlobalVariable("tCycleTime", refData.cycleTime / 1000);
 }
@@ -68,8 +68,8 @@ void saveReferenceData() {
     Serial.println("Referenčni podatki shranjeni!");
     
     // Posodobi globalne spremenljivke v Nextion
-    display.setGlobalVariable("tMaxAngle", (int32_t)(refData.maxAngle * 10));
-    display.setGlobalVariable("tMinAngle", (int32_t)(refData.minAngle * 10));
+    display.setGlobalVariable("vaMaxAngle", (int32_t)(refData.maxAngle * 10));
+    display.setGlobalVariable("vaMinAngle", (int32_t)(refData.minAngle * 10));
     display.setGlobalVariable("tRevPerAngle", refData.revPerAngle);
     display.setGlobalVariable("tCycleTime", refData.cycleTime / 1000);
 }

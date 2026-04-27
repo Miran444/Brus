@@ -83,15 +83,17 @@ bDol.pco=54970
 
 ### Korak 5: Prikaz nastavljenih kotov (levo spodaj)
 
-**Xfloat za začetni kot:**
-1. Toolbox → **Xfloat**
+**Text za začetni kot:**
+1. Toolbox → **Text**
 2. Position: **X=10, Y=140, W=100, H=35**
 3. Properties:
-   - **objname**: `xAngleStart`
-   - **vvs1**: 1 (decimalno mesto)
+   - **objname**: `tAngleStart`
+   - **txt**: `0.0°`
    - **font**: size 2
    - **pco**: 2016 (zelena)
    - **bco**: 16448
+   - **xcen**: 1
+   - **ycen**: 1
 
 **Label "Start:"**
 1. Toolbox → **Text**
@@ -102,15 +104,17 @@ bDol.pco=54970
    - **pco**: 50712 (svetlo siva)
    - **bco**: 16448
 
-**Xfloat za končni kot:**
-1. Toolbox → **Xfloat**
+**Text za končni kot:**
+1. Toolbox → **Text**
 2. Position: **X=120, Y=140, W=100, H=35**
 3. Properties:
-   - **objname**: `xAngleStop`
-   - **vvs1**: 1 (decimalno mesto)
+   - **objname**: `tAngleStop`
+   - **txt**: `0.0°`
    - **font**: size 2
    - **pco**: 1024 (modra)
    - **bco**: 16448
+   - **xcen**: 1
+   - **ycen**: 1
 
 **Label "Stop:"**
 1. Toolbox → **Text**
@@ -280,12 +284,12 @@ covx xStartAngle.val,vaStartAngle.txt,0,0
 covx xEndAngle.val,vaEndAngle.txt,0,0
 
 // Validacija vrednosti
-if(xStartAngle.val>tMaxAngle.val)
+if(xStartAngle.val>vaMaxAngle.val)
 {
   // Start angle je večji od maksimuma
   page 2
 }
-else if(xEndAngle.val<tMinAngle.val)
+else if(xEndAngle.val<vaMinAngle.val)
 {
   // End angle je manjši od minimuma
   page 2
@@ -304,8 +308,10 @@ else
 **OPOMBA:** Potrebuješ:
 - **vaStartAngle** (String Variable, za temp shranjevanje)
 - **vaEndAngle** (String Variable, za temp shranjevanje)
-- **tMaxAngle** (Number Variable - globalna, nastavi se na Page 3)
-- **tMinAngle** (Number Variable - globalna, nastavi se na Page 3)
+- **vaMaxAngle** (Number Variable - globalna, nastavi se na Page 3 ali iz ESP32)
+- **vaMinAngle** (Number Variable - globalna, nastavi se na Page 3 ali iz ESP32)
+- **vaAngleStart** (Number Variable - globalna, posodobi se avtomatsko)
+- **vaAngleStop** (Number Variable - globalna, posodobi se avtomatsko)
 - **Page 2** - Error stran (opcijsko, lahko tudi samo prikaže sporočilo)
 
 ### Button za nazaj:
@@ -324,10 +330,12 @@ Ta stran se uporablja za avtomatsko merjenje mejnih kotov in kalibracijo.
 
 ### Globalne spremenljivke (Variables):
 Ustvarite v **Tools → Variables**:
-1. **tMaxAngle** - Number (max izmerjeni kot, npr. 280 = 28.0°)
-2. **tMinAngle** - Number (min izmerjeni kot, npr. 50 = 5.0°)
-3. **tRevPerAngle** - Number (število obratov na stopinjo)
-4. **tCycleTime** - Number (čas cikla v sekundah)
+1. **vaMaxAngle** - Number (max izmerjeni kot, npr. 280 = 28.0°)
+2. **vaMinAngle** - Number (min izmerjeni kot, npr. 50 = 5.0°)
+3. **vaAngleStart** - Number (začetni kot za delo, npr. 50 = 5.0°)
+4. **vaAngleStop** - Number (končni kot za delo, npr. 280 = 28.0°)
+5. **tRevPerAngle** - Number (število obratov na stopinjo)
+6. **tCycleTime** - Number (čas cikla v sekundah)
 
 ### Button za referenčni hod (na Page 1):
 1. Toolbox → **Button**
@@ -431,8 +439,8 @@ V Serial Monitoru bi morali videti podatke, Nextion pa jih bo prikazal.
 - **tMode** - Text - Način delovanja (OFF/MANUAL/AUTO)
 - **tStatus** - Text - Status stroja (Stop/Pripravljen/Run ali alarm sporočilo)
 - **tAngle** - Text - Trenutni kot (velika številka)
-- **xAngleStart** - Xfloat - Začetni kot za avto način
-- **xAngleStop** - Xfloat - Končni kot za avto način
+- **tAngleStart** - Text - Začetni kot za avto način (prikaz z °)
+- **tAngleStop** - Text - Končni kot za avto način (prikaz z °)
 - **tCycles** - Text - Prikaz ciklov (npr. "3/7")
 - **tSpindle** - Text - Status vretena (GOR/DOL/STOP)
 - **jSpeed** - Progress Bar - Hitrost vretena (0-100%)
@@ -482,9 +490,9 @@ display.setBrusState(true);                 // Zelena barva = aktiven
 display.setPnevState(false);                // Siva = neaktiven
 
 // Globalne spremenljivke (za validacijo)
-display.setGlobalVariable("tMaxAngle", 280);  // 28.0°
-display.setGlobalVariable("tMinAngle", 50);   // 5.0°
-int32_t maxAngle = display.getGlobalVariable("tMaxAngle");
+display.setGlobalVariable("vaMaxAngle", 280);  // 28.0°
+display.setGlobalVariable("vaMinAngle", 50);   // 5.0°
+int32_t maxAngle = display.getGlobalVariable("vaMaxAngle");
 
 // Branje touch eventov in custom stringov
 if (display.available()) {
@@ -520,8 +528,9 @@ float minAngle = preferences.getFloat("minAngle", 5.0);
 preferences.end();
 
 display.setAngleRange(angleStart, angleStop);
-display.setGlobalVariable("tMaxAngle", (int32_t)(maxAngle * 10));
-display.setGlobalVariable("tMinAngle", (int32_t)(minAngle * 10));
+display.setGlobalVariable("vaMaxAngle", (int32_t)(maxAngle * 10));
+display.setGlobalVariable("vaMinAngle", (int32_t)(minAngle * 10));
+// vaAngleStart in vaAngleStop se nastavita avtomatsko v setAngleRange()
 ```
 
 **Primeri celotne implementacije:** 
@@ -535,11 +544,11 @@ display.setGlobalVariable("tMinAngle", (int32_t)(minAngle * 10));
 
 Ob zagonu ESP32 preveri:
 
-1. **Referenčni hod izveden?** (tMinAngle > 0 && tMaxAngle > 0)
+1. **Referenčni hod izveden?** (vaMinAngle > 0 && vaMaxAngle > 0)
    - NE → `tStatus.txt = "Izvedite referencni hod !"`
    - MODE_MANUAL deluje, MODE_AUTO NE
 
-2. **Koti nastavljeni?** (xAngleStart > 0 && xAngleStop > 0)
+2. **Koti nastavljeni?** (vaAngleStart > 0 && vaAngleStop > 0)
    - NE → `tStatus.txt = "Nastavite zacetni in koncni kot !"`
    - MODE_MANUAL deluje, MODE_AUTO NE
 

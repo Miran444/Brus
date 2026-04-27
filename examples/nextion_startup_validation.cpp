@@ -66,10 +66,10 @@ void loadSettings() {
 
 void updateNextionSettings() {
     // Posodobi globalne spremenljivke v Nextion
-    display.setGlobalVariable("tMinAngle", (int32_t)(settings.minAngle * 10));
-    display.setGlobalVariable("tMaxAngle", (int32_t)(settings.maxAngle * 10));
+    display.setGlobalVariable("vaMinAngle", (int32_t)(settings.minAngle * 10));
+    display.setGlobalVariable("vaMaxAngle", (int32_t)(settings.maxAngle * 10));
     
-    // Posodobi lokalne spremenljivke za prikaz
+    // Posodobi lokalne spremenljivke za prikaz (in vaAngleStart/vaAngleStop)
     display.setAngleRange(settings.angleStart, settings.angleStop);
 }
 

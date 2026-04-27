@@ -74,6 +74,7 @@ void saveAngleSettings(float start, float stop) {
 }
 
 void handleNextionEvents() {
+  String data;
     // Preveri če so na voljo dogodki iz Nextiona
     if (display.available()) {
         uint8_t componentId = display.readTouchEvent();
@@ -83,7 +84,7 @@ void handleNextionEvents() {
                 Serial.println("Prejem nastavitev kotov...");
                 
                 // Preberi custom string "ID5:357;ID6:80"
-                String data = display.readString();
+                data = display.readString();
                 
                 if (data.length() > 0) {
                     float newStart, newStop;

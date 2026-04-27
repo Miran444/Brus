@@ -78,6 +78,50 @@ void NextionDisplay::showPage(uint8_t pageId) {
     endCommand();
 }
 
+void NextionDisplay::setGlobalVariable(const char* varName, int32_t value) {
+    // Nastavi globalno spremenljivko (Variable v Nextion HMI)
+    serial->print(varName);
+    serial->print(".val=");
+    serial->print(value);
+    endCommand();
+}
+
+int32_t NextionDisplay::getGlobalVariable(const char* varName) {
+    // Preberi globalno spremenljivko
+    serial->print("get ");
+    serial->print(varName);
+    serial->print(".val");
+    endCommand();
+    
+    // Počakaj na odgovor (4 byte number return)
+    delay(50);
+    if (serial->available() >= 8) {
+        if (serial->read() == 0x71) {  // Numeric return header
+            uint32_t value = 0;
+            value = serial->read();
+            value |= serial->read() << 8;
+            value |= serial->read() << 16;
+            value |= serial->read() << 24;
+            
+            // Preberi končna 3x 0xFF
+            serial->read();
+            serial->read();
+            serial->read();
+            
+            return (int32_t)value;
+        }
+    }
+    return -1;  // Error
+}
+
+void NextionDisplay::enableManualButtons(bool enable) {
+    // Omogoči/onemogoči vse ročne gumbe
+    setButtonState("bBrus", enable);
+    setButtonState("bPnev", enable);
+    setButtonState("bGor", enable);
+    setButtonState("bDol", enable);
+}
+
 // ===== POŠILJANJE PODATKOV =====
 
 void NextionDisplay::setMode(const char* mode) {
@@ -158,7 +202,13 @@ void NextionDisplay::setStatus(const char* status) {
 }
 
 void NextionDisplay::setButtonState(const char* button, bool enabled) {
-    // Omogoči/onemogoči button (za ročni način)
+    // Spremeni barvo texta buttona (aktiven/neaktiven)
+    serial->print(button);
+    serial->print(".pco=");
+    serial->print(enabled ? "0" : "54970");  // 0=črna(aktiven), 54970=siva(neaktiven)
+    endCommand();
+    
+    // Omogoči/onemogoči button (touch)
     serial->print("tsw ");
     serial->print(button);
     serial->print(",");

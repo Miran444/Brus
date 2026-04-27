@@ -236,14 +236,14 @@ void loop() {
     }
     
     // Nextion - število obratov
-    display.setRevolutions(inputs.getRevolutions());
+    // display.setRevolutions(inputs.getRevolutions());
     
     // Nextion - status motorjev
-    display.setMotorStatus(
-      outputs.isGrindingMotorOn(),
-      outputs.isWaterPumpOn(),
-      outputs.isKnifePusherOn()
-    );
+    // display.setMotorStatus(
+    //   outputs.isGrindingMotorOn(),
+    //   outputs.isWaterPumpOn(),
+    //   outputs.isKnifePusherOn()
+    // );
     
     // Nextion - status vretena
     display.setSpindleStatus(
@@ -253,13 +253,13 @@ void loop() {
     );
     
     // Nextion - alarmi
-    if (inputs.isTempAlarm()) {
-      display.setAlarm("TEMPERATURA ALARM!");
-    } else if (autoCycle.hasError()) {
-      display.setAlarm(autoCycle.getErrorMessage().c_str());
-    } else {
-      display.clearAlarm();
-    }
+    // if (inputs.isTempAlarm()) {
+    //   display.setAlarm("TEMPERATURA ALARM!");
+    // } else if (autoCycle.hasError()) {
+    //   display.setAlarm(autoCycle.getErrorMessage().c_str());
+    // } else {
+    //   display.clearAlarm();
+    // }
   }
   
   delay(10); // Kratka zakasnitev za stabilnost

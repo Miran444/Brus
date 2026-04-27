@@ -26,6 +26,19 @@
 2. **bco** (background color): 16448 (temno siva)
 3. OK
 
+### Korak 1a: Preinitialize Event za Page 0
+1. Desni klik na **page0** → **Event**
+2. **Preinitialize Event** → vnesite:
+```
+// Nastavi vse ročne gumbe na neaktivne (siva barva texta)
+bBrus.pco=54970
+bPnev.pco=54970
+bGor.pco=54970
+bDol.pco=54970
+```
+
+**OPOMBA:** ESP32 bo ob zagonu preveril nastavitve in ustrezno aktiviral gumbe v MODE_MANUAL.
+
 ### Korak 2: Dodajanje MODE prikaza (zgoraj center)
 1. Toolbox → **Text** → povlecite na zaslon
 2. Position: **X=50, Y=10, W=380, H=60**
@@ -171,7 +184,11 @@
    - **bco**: 50712
 
 **OPOMBA:** Vsi buttoni (bBrus, bPnev, bGor, bDol) so aktivni samo v ročnem načinu!  
-ESP32 bo preko kode omogočil/onemogočil buttone z ukazom `tsw bBrus,1` (enable) ali `tsw bBrus,0` (disable).
+ESP32 bo preko kode spremenil barvo texta: `bBrus.pco=0` (aktiven - črna) ali `bBrus.pco=54970` (neaktiven - siva).
+
+**Barve texta za buttone:**
+- **pco=0** - Črna (aktiven)
+- **pco=54970** - Siva (neaktiven)
 
 ### Korak 9: Button Settings (zgoraj desno)
 1. Toolbox → **Button**
@@ -258,12 +275,38 @@ Ko boste ustvarili Page 1, jo lahko uporabite za:
 
 **Touch Release Event za bSave:**
 ```
-print "ID5:"
-print xStartAngle.val
-print ";ID6:"
-print xEndAngle.val
-printh ff ff ff
+// Konvertiraj float v string
+covx xStartAngle.val,vaStartAngle.txt,0,0
+covx xEndAngle.val,vaEndAngle.txt,0,0
+
+// Validacija vrednosti
+if(xStartAngle.val>tMaxAngle.val)
+{
+  // Start angle je večji od maksimuma
+  page 2
+}
+else if(xEndAngle.val<tMinAngle.val)
+{
+  // End angle je manjši od minimuma
+  page 2
+}
+else
+{
+  // Vrednosti so OK - pošlji na ESP32
+  prints "ID5:",4
+  prints vaStartAngle.txt,4
+  prints ";ID6:",5
+  prints vaEndAngle.txt,4
+  printh ff ff ff
+}
 ```
+
+**OPOMBA:** Potrebuješ:
+- **vaStartAngle** (String Variable, za temp shranjevanje)
+- **vaEndAngle** (String Variable, za temp shranjevanje)
+- **tMaxAngle** (Number Variable - globalna, nastavi se na Page 3)
+- **tMinAngle** (Number Variable - globalna, nastavi se na Page 3)
+- **Page 2** - Error stran (opcijsko, lahko tudi samo prikaže sporočilo)
 
 ### Button za nazaj:
 1. Toolbox → **Button**
@@ -275,7 +318,45 @@ printh ff ff ff
 
 ---
 
-## 4. POMEMBNE OPOMBE
+## 4. PAGE 3 - REFERENČNI HOD (pageRef)
+
+Ta stran se uporablja za avtomatsko merjenje mejnih kotov in kalibracijo.
+
+### Globalne spremenljivke (Variables):
+Ustvarite v **Tools → Variables**:
+1. **tMaxAngle** - Number (max izmerjeni kot, npr. 280 = 28.0°)
+2. **tMinAngle** - Number (min izmerjeni kot, npr. 50 = 5.0°)
+3. **tRevPerAngle** - Number (število obratov na stopinjo)
+4. **tCycleTime** - Number (čas cikla v sekundah)
+
+### Button za referenčni hod (na Page 1):
+1. Toolbox → **Button**
+2. Properties:
+   - **objname**: `bRef`
+   - **id**: 15 (0x0F)
+   - **txt**: `REFERENCA`
+   - **Touch Release Event**: `page 3`
+
+### Osnovna struktura Page 3:
+```
+[Label: "REFERENČNI HOD"]
+[Text: tRefStatus - prikaz trenutnega stanja]
+[Text: tMaxAngleDisplay - prikaz max kota]
+[Text: tMinAngleDisplay - prikaz min kota]
+[Button: bStartRef - začetek referenčnega hoda]
+[Button: bBackFromRef - nazaj na Page 1]
+```
+
+**Postopek referenčnega hoda (izvaja se v ESP32):**
+1. Uporabnik pritisne "bRef" → ESP32 prejme component ID 15
+2. ESP32 zažene avtomatski cikel za merjenje min/max kotov
+3. ESP32 pošilja posodobitve na display
+4. Ko je končano, ESP32 pošlje vrednosti: tMaxAngle, tMinAngle, tRevPerAngle, tCycleTime
+5. Te vrednosti se shranijo v Preferences in v Nextion globalne spremenljivke
+
+---
+
+## 5. POMEMBNE OPOMBE
 
 ### Buttoni aktivni samo v ročnem načinu:
 ESP32 bo z kodo omogočil/onemogočil buttone:
@@ -290,6 +371,10 @@ display.setButtonState("bGor", false);   // Onemogoči
 ### Touch eventi:
 Ko uporabnik pritisne button v HMI, Nextion pošlje Touch Event na ESP32.  
 ESP32 ga prebere z `readTouchEvent()` funkcijo in reagira.
+
+### Validacija vnosov:
+Validacija kotov se izvaja direktno v HMI (Touch Event) preden se podatki pošljejo na ESP32.  
+To preprečuje neveljavne vrednosti in zmanjša obremenitev ESP32.
 
 ---
 
@@ -383,14 +468,23 @@ display.setAngleRange(5.0, 28.0);          // Start in Stop kot
 display.setSpindleStatus(true, true, 128);  // premika, smer_gor, hitrost
 
 // Buttoni (omogoči/onemogoči)
-display.setButtonState("bBrus", true);      // Omogoči button
-display.setButtonState("bPnev", false);     // Onemogoči button
+display.setButtonState("bBrus", true);      // Omogoči button (črna barva texta)
+display.setButtonState("bPnev", false);     // Onemogoči button (siva barva texta)
 display.setButtonState("bGor", true);
 display.setButtonState("bDol", true);
+
+// Ali vse hkrati
+display.enableManualButtons(true);          // Omogoči vse ročne gumbe
+display.enableManualButtons(false);         // Onemogoči vse ročne gumbe
 
 // Stanje buttonov (vizualni feedback)
 display.setBrusState(true);                 // Zelena barva = aktiven
 display.setPnevState(false);                // Siva = neaktiven
+
+// Globalne spremenljivke (za validacijo)
+display.setGlobalVariable("tMaxAngle", 280);  // 28.0°
+display.setGlobalVariable("tMinAngle", 50);   // 5.0°
+int32_t maxAngle = display.getGlobalVariable("tMaxAngle");
 
 // Branje touch eventov in custom stringov
 if (display.available()) {
@@ -411,17 +505,52 @@ if (display.available()) {
             display.setAngleRange(startAngle, endAngle);
         }
     }
+    else if (buttonId == 15) {  // bRef - referenčni hod
+        // Zaženi avtomatski cikel za kalibracijo
+        startReferenceRun();
+    }
 }
 
 // Nalaganje shranjenih vrednosti ob zagonu
 preferences.begin("brus", false);
 float angleStart = preferences.getFloat("angleStart", 5.0);
 float angleStop = preferences.getFloat("angleStop", 28.0);
+float maxAngle = preferences.getFloat("maxAngle", 28.0);
+float minAngle = preferences.getFloat("minAngle", 5.0);
 preferences.end();
+
 display.setAngleRange(angleStart, angleStop);
+display.setGlobalVariable("tMaxAngle", (int32_t)(maxAngle * 10));
+display.setGlobalVariable("tMinAngle", (int32_t)(minAngle * 10));
 ```
 
-**Primer celotne implementacije:** Glej `examples/nextion_angle_settings.cpp`
+**Primeri celotne implementacije:** 
+- `examples/nextion_angle_settings.cpp` - vnos in shranjevanje kotov
+- `examples/nextion_reference_calibration.cpp` - referenčni hod in kalibracija
+- `examples/nextion_startup_validation.cpp` - validacija ob zagonu in upravljanje načinov
+
+---
+
+## 11. VALIDACIJA OB ZAGONU
+
+Ob zagonu ESP32 preveri:
+
+1. **Referenčni hod izveden?** (tMinAngle > 0 && tMaxAngle > 0)
+   - NE → `tStatus.txt = "Izvedite referencni hod !"`
+   - MODE_MANUAL deluje, MODE_AUTO NE
+
+2. **Koti nastavljeni?** (xAngleStart > 0 && xAngleStop > 0)
+   - NE → `tStatus.txt = "Nastavite zacetni in koncni kot !"`
+   - MODE_MANUAL deluje, MODE_AUTO NE
+
+3. **Vse OK?**
+   - DA → `tStatus.txt = "Pripravljen"`
+   - MODE_MANUAL in MODE_AUTO delujeta
+
+### Način delovanja:
+- **MODE_OFF**: Vsi ročni gumbi neaktivni (siva barva)
+- **MODE_MANUAL**: Ročni gumbi aktivni (črna barva) - deluje VEDNO
+- **MODE_AUTO**: Ročni gumbi neaktivni - deluje samo če so reference OK
 
 ---
 

@@ -496,43 +496,176 @@ ESP32 bo dodatno preveril validacijo pred shranjevanjem v NVS za dvojno varnost.
 
 ---
 
-## 4. PAGE 3 - REFERENČNI HOD (pageRef)
+## 4. PAGE 3 - REFERENČNI HOD
 
-Ta stran se uporablja za avtomatsko merjenje mejnih kotov in kalibracijo.
+Ta stran se uporablja za avtomatsko merjenje mejnih kotov in kalibracijo.  
+**Dostop**: S pritiskom na gumb **bRef** (id=15) na Page 1 (stalno aktiven).
 
-### Globalne spremenljivke (Variables):
-Ustvarite v **Tools → Variables**:
-1. **vaMaxAngle** - Number (max izmerjeni kot, npr. 280 = 28.0°)
-2. **vaMinAngle** - Number (min izmerjeni kot, npr. 50 = 5.0°)
-3. **vaAngleStart** - Number (začetni kot za delo, npr. 50 = 5.0°)
-4. **vaAngleStop** - Number (končni kot za delo, npr. 280 = 28.0°)
-5. **tRevPerAngle** - Number (število obratov na stopinjo)
-6. **tCycleTime** - Number (čas cikla v sekundah)
+### Globalne spremenljivke na Page 0 (Variables):
+Ustvarite v **Tools → Variables** (na page0):
+1. **vaMinAngle** - Number, id=22 (min kot × 10, npr. 50 = 5.0°)
+2. **vaMaxAngle** - Number, id=23 (max kot × 10, npr. 280 = 28.0°)
+3. **vaAngleStart** - Number (začetni kot za delo × 10)
+4. **vaAngleStop** - Number (končni kot za delo × 10)
 
-### Button za referenčni hod (na Page 1):
+---
+
+### Korak 1: Prikaz trenutnega kota
+1. Toolbox → **Text**
+2. Position: **X=50, Y=80, W=180, H=80**
+3. Properties:
+   - **objname**: `tActualAngle`
+   - **id**: 14
+   - **txt**: `0.0`
+   - **font**: velik font (size 5-6)
+   - **pco**: 65535 (bela)
+   - **bco**: 16448 (temno siva)
+   - **xcen**: 1
+   - **ycen**: 1
+
+**POMEMBNO:** Ta vrednost se **stalno osvežuje** med referenčnim hodom!
+
+### Korak 2: Prikaz minimalnega kota
+1. Toolbox → **Text**
+2. Position: **X=250, Y=80, W=120, H=40**
+3. Properties:
+   - **objname**: `tMinAngle`
+   - **id**: 15
+   - **txt**: `0.0`
+   - **font**: size 3
+   - **pco**: 2016 (zelena)
+   - **bco**: 16448
+
+### Korak 3: Prikaz maksimalnega kota
+1. Toolbox → **Text**
+2. Position: **X=250, Y=130, W=120, H=40**
+3. Properties:
+   - **objname**: `tMaxAngle`
+   - **id**: 16
+   - **txt**: `0.0`
+   - **font**: size 3
+   - **pco**: 2016 (zelena)
+   - **bco**: 16448
+
+### Korak 4: Prikaz hitrosti motorja (za page4)
+1. Toolbox → **Text**
+2. Position: **X=50, Y=180, W=100, H=30**
+3. Properties:
+   - **objname**: `tMSpeed`
+   - **id**: 17
+   - **txt**: `0`
+   - **font**: size 2
+
+### Korak 5: Število obratov
+1. Toolbox → **Text**
+2. Position: **X=50, Y=220, W=100, H=30**
+3. Properties:
+   - **objname**: `tMRev`
+   - **id**: 18
+   - **txt**: `0`
+   - **font**: size 2
+   - **pco**: 65535
+
+**Opis:** Prikazuje število obratov motorja (S45 števec) od tMinAngle do tMaxAngle.
+
+### Korak 6: Obrati na stopinjo
+1. Toolbox → **Text**
+2. Position: **X=180, Y=220, W=120, H=30**
+3. Properties:
+   - **objname**: `tRevPerAngle`
+   - **id**: 19
+   - **txt**: `0.0`
+   - **font**: size 2
+   - **pco**: 65535
+
+**Opis:** Izračunani obrati motorja za eno stopinjo kota (obrati / (maxAngle - minAngle)).
+
+### Korak 7: Čas referenčnega hoda
+1. Toolbox → **Text**
+2. Position: **X=320, Y=220, W=120, H=30**
+3. Properties:
+   - **objname**: `tTime`
+   - **id**: 20
+   - **txt**: `0.0`
+   - **font**: size 2
+   - **pco**: 65535
+
+**Opis:** Čas potreben za hod od minAngle do maxAngle (format: sekunde z 1 decimalno mesto, npr. "12.5").
+
+### Korak 8: Button za nazaj
 1. Toolbox → **Button**
 2. Properties:
-   - **objname**: `bRef`
-   - **id**: 15 (0x0F)
-   - **txt**: `REFERENCA`
-   - **Touch Release Event**: `page 3`
+   - **objname**: `bBackFromRef`
+   - **txt**: `◀ NAZAJ`
+   - **Touch Release Event**: `page 1`
 
-### Osnovna struktura Page 3:
-```
-[Label: "REFERENČNI HOD"]
-[Text: tRefStatus - prikaz trenutnega stanja]
-[Text: tMaxAngleDisplay - prikaz max kota]
-[Text: tMinAngleDisplay - prikaz min kota]
-[Button: bStartRef - začetek referenčnega hoda]
-[Button: bBackFromRef - nazaj na Page 1]
-```
+### Korak 9: Button za začetek referenčnega hoda
+1. Toolbox → **Button**
+2. Position: **X=150, Y=260, W=180, H=60**
+3. Properties:
+   - **objname**: `bRefStart`
+   - **id**: 3 (Component ID)
+   - **txt**: `START`
+   - **font**: size 3
+   - **pco**: 65535 (bela)
+   - **bco**: 2016 (zelena)
 
-**Postopek referenčnega hoda (izvaja se v ESP32):**
-1. Uporabnik pritisne "bRef" → ESP32 prejme component ID 15
-2. ESP32 zažene avtomatski cikel za merjenje min/max kotov
-3. ESP32 pošilja posodobitve na display
-4. Ko je končano, ESP32 pošlje vrednosti: tMaxAngle, tMinAngle, tRevPerAngle, tCycleTime
-5. Te vrednosti se shranijo v Preferences in v Nextion globalne spremenljivke
+**Touch Press Event za bRefStart:**
+- Nastavite **Send Component ID** na **enabled** (ID=3)
+- ESP32 bo prejel Touch Press Event in začel referenčni hod
+
+---
+
+### Postopek referenčnega hoda (izvaja se v ESP32):
+
+**Zahteve:**
+- Sistem mora biti v **MANUAL načinu** (S1 - Ročno)
+- Referenčni hod se NE začne avtomatsko ob prehodu na page3
+- Uporabnik mora pritisniti **bRefStart** gumb
+
+**Faza 1: Iskanje minimalnega kota**
+1. Vreteno se premika navzdol (SPINDLE_DOWN)
+2. Stalno se posodablja `tActualAngle` s trenutnim kotom iz AS5600
+3. Ko se aktivira **S43 končno stikalo** (vreteno v spodnjem položaju ~0°):
+   - Zabeleži minimalni kot: `minAngle = angleSensor.getCalibratedAngle()`
+   - Posodobi `tMinAngle` na displayu
+   - Shrani v globalno spremenljivko: `vaMinAngle = minAngle × 10`
+   - Ustavi vreteno
+
+**Faza 2: Iskanje maksimalnega kota**
+1. Resetira števec obratov (S45)
+2. Začne merjenje časa
+3. Vreteno se premika navzgor (SPINDLE_UP)
+4. Stalno se posodablja `tActualAngle` in `tMRev` (število obratov)
+5. Spremlja spremembo kota (∆angle):
+   - Če se kot ne spremeni več določeno število obratov (50) → dosežen max kot
+   - ALI če je dodano **končno stikalo za max pozicijo** → uporabi stikalo
+6. Ko je max dosežen:
+   - Ustavi motor
+   - **FAZA 3: USTALJANJE** - Počaka 1 sekundo da se vreteno ustali in poskoči nazaj (kot se malo zmanjša)
+   - Zabeleži maksimalni kot: `maxAngle = angleSensor.getCalibratedAngle()`
+   - Ustavi štetje časa
+   - Posodobi `tMaxAngle` na displayu
+   - Shrani v globalno spremenljivko: `vaMaxAngle = maxAngle × 10`
+
+**POMEMBNO:** Zaradi teže vretena se ob ustavitvi motor malo poskoči nazaj navzdol. Sistem počaka 1 sekundo in nato prebere končni max kot za natančnejše merjenje.
+
+**Faza 3: Izračun in shranjevanje**
+1. Izračuna:
+   - `revPerAngle = totalRevolutions / (maxAngle - minAngle)`
+   - `time = (millis() - startTime) / 1000.0` (v sekundah)
+2. Posodobi display:
+   - `tRevPerAngle` (format "X.X")
+   - `tTime` (format "X.X")
+3. Shrani vse vrednosti v Preferences (NVS) za trajno shranjevanje
+
+**Opombe:**
+- Med celotnim postopkom je `tActualAngle` stalno osvežen
+- Referenčni hod se začne samo s pritiskom na **bRefStart** gumb
+- Po končanem referenčnem hodu lahko uporabnik:
+  - Pritisne **bBackFromRef** → vrne se na page1
+  - Vrednosti min/max se avtomatsko uporabijo na page1 za validacijo kotov
+- **Ustaljanje pri max kotu**: Sistem počaka 1s po ustavitvi, kar omogoči natančnejše merjenje zaradi poskoka vretena
 
 ---
 

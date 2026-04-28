@@ -36,6 +36,18 @@ float savedAngleStart = 0.0;
 float savedAngleStop = 0.0;
 bool anglesConfigured = false;  // Ali sta kota nastavljena
 
+// Page1 - Nastavitev kotov
+uint8_t currentPage = 0;  // Trenutna stran (0=page0, 1=page1)
+enum AngleSettingMode {
+  ANGLE_IDLE = 0,      // Ni aktivno
+  ANGLE_SET_START = 1, // Nastavljamo začetni kot
+  ANGLE_SET_STOP = 2   // Nastavljamo končni kot
+};
+AngleSettingMode angleSettingMode = ANGLE_IDLE;
+float tempAngleStart = 0.0;  // Začasni koti pred shranjevanjem
+float tempAngleStop = 0.0;
+bool anglesChanged = false;  // Ali so se koti spremenili (za aktivacijo bSave)
+
 // Deklaracije funkcij
 void handleNextionEvents();
 void handleTouchPress(uint8_t componentId);
@@ -43,6 +55,8 @@ void handleTouchRelease(uint8_t componentId);
 void loadAnglesFromPreferences();
 void saveAnglesToPreferences();
 void clearAnglesFromPreferences();
+void updatePage1AngleDisplay();
+void updateBNastaviKoteText();
 
 void setup() {
   // Inicializacija Serial komunikacije
@@ -81,8 +95,12 @@ void setup() {
   // Naloži shranjene kote iz NVS
   loadAnglesFromPreferences();
   
+  // Nastavi začetno stran
+  display.showPage(0);
+  currentPage = 0;
+  
   Serial.println("Sistem pripravljen!");
-  Serial.println("ROČNI NAČIN: Nastavite začetni in končni kot, ter pritisnite bSave na displayu");
+  Serial.println("ROČNI NAČIN: Za nastavitev kotov pritisnite gumb Settings na displayu");
   Serial.println();
 }
 
@@ -106,6 +124,44 @@ void handleNextionEvents() {
         handleTouchRelease(releaseId);
       }
     }
+    else if (eventType == 0x70) {
+      // String Return Event - za parsing kotov iz page1
+      String data = display.readString();
+      if (data.length() > 0) {
+        float start, stop;
+        if (display.parseAngleSettings(data, start, stop)) {
+          // Validacija: Začetni kot mora biti večji od končnega
+          if (start <= stop) {
+            Serial.println("NAPAKA: Začetni kot mora biti večji od končnega!");
+            Serial.print("  Start: ");
+            Serial.print(start, 1);
+            Serial.print("°, Stop: ");
+            Serial.print(stop, 1);
+            Serial.println("°");
+            display.setText("tStatus_pg1", "NAPAKA: Start > Stop!");
+            return;
+          }
+          
+          // Koti uspešno parsirani iz xStartAngle in xEndAngle
+          tempAngleStart = start;
+          tempAngleStop = stop;
+          anglesChanged = true;
+          
+          Serial.print("Koti nastavljeni ročno: Start=");
+          Serial.print(tempAngleStart, 1);
+          Serial.print("°, Stop=");
+          Serial.print(tempAngleStop, 1);
+          Serial.println("°");
+          display.setText("tStatus_pg1", "Koti OK - pritisnite bSave!");
+          
+          // Posodobi prikaz
+          updatePage1AngleDisplay();
+          
+          // Aktiviraj bSave gumb
+          display.setButtonState("bSave", true);
+        }
+      }
+    }
     else {
       // Neznan dogodek - preberi in zavrzi
       Serial2.read();
@@ -119,90 +175,171 @@ void handleTouchPress(uint8_t componentId) {
   
   S1Mode mode = inputs.getS1Mode();
   
-  // Akcije samo v MANUAL načinu
-  if (mode != MODE_MANUAL) {
-    Serial.println("Gumbi delujejo samo v MANUAL načinu!");
-    return;
-  }
-  
-  switch(componentId) {
-    case 17:  // bGor - začni premik gor
-      Serial.println("[bGor] Vreteno GOR - START");
-      bGorPressed = true;
-      outputs.moveSpindleUp(SPINDLE_SPEED_MEDIUM);
-      break;
-      
-    case 18:  // bDol - začni premik dol
-      Serial.println("[bDol] Vreteno DOL - START");
-      bDolPressed = true;
-      outputs.moveSpindleDown(SPINDLE_SPEED_MEDIUM);
-      break;
-      
-    case 19:  // bBrus - toggle motor kamna
-      brusActive = !brusActive;
-      outputs.setGrindingMotor(brusActive);
-      display.setBrusState(brusActive);
-      Serial.print("[bBrus] Motor kamna: ");
-      Serial.println(brusActive ? "ON" : "OFF");
-      break;
-      
-    case 20:  // bPnev - toggle ventil noža
-      pnevActive = !pnevActive;
-      outputs.setKnifePusher(pnevActive);
-      display.setPnevState(pnevActive);
-      Serial.print("[bPnev] Ventil noža: ");
-      Serial.println(pnevActive ? "ON" : "OFF");
-      break;
-      
-    case 7:   // bSave - shrani začetni in končni kot
-      {
-        // Shrani trenutni kot iz AS5600
-        float currentAngle = angleSensor.getCalibratedAngle();
+  // ===== PAGE 0 - ROČNO UPRAVLJANJE =====
+  if (currentPage == 0) {
+    // Akcije samo v MANUAL načinu
+    if (mode != MODE_MANUAL) {
+      Serial.println("Gumbi delujejo samo v MANUAL načinu!");
+      return;
+    }
+    
+    switch(componentId) {
+      case 17:  // bGor - začni premik gor
+        Serial.println("[bGor] Vreteno GOR - START");
+        bGorPressed = true;
+        outputs.moveSpindleUp(SPINDLE_SPEED_MEDIUM);
+        break;
         
-        // Če še nimamo začetnega kota, shrani kot Start
-        if (savedAngleStart == 0.0) {
-          savedAngleStart = currentAngle;
-          Serial.print("[bSave] Začetni kot shranjen: ");
+      case 18:  // bDol - začni premik dol
+        Serial.println("[bDol] Vreteno DOL - START");
+        bDolPressed = true;
+        outputs.moveSpindleDown(SPINDLE_SPEED_MEDIUM);
+        break;
+        
+      case 19:  // bBrus - toggle motor kamna
+        brusActive = !brusActive;
+        outputs.setGrindingMotor(brusActive);
+        display.setBrusState(brusActive);
+        Serial.print("[bBrus] Motor kamna: ");
+        Serial.println(brusActive ? "ON" : "OFF");
+        break;
+        
+      case 20:  // bPnev - toggle ventil noža
+        pnevActive = !pnevActive;
+        outputs.setKnifePusher(pnevActive);
+        display.setPnevState(pnevActive);
+        Serial.print("[bPnev] Ventil noža: ");
+        Serial.println(pnevActive ? "ON" : "OFF");
+        break;
+        
+      case 16:  // bSettings - preklop na page1
+        Serial.println("[bSettings] Preklop na Page 1 - Nastavitve");
+        display.showPage(1);
+        currentPage = 1;
+        
+        // Inicializiraj začasne kote iz shranjenih
+        tempAngleStart = savedAngleStart;
+        tempAngleStop = savedAngleStop;
+        anglesChanged = false;
+        angleSettingMode = ANGLE_IDLE;
+        
+        // Posodobi prikaz na page1
+        updatePage1AngleDisplay();
+        display.setText("tStatus_pg1", "Vnesi kote ali uporabi Nastavi gumb");
+        break;
+        
+      default:
+        Serial.print("Neznan gumb ID: ");
+        Serial.println(componentId);
+        break;
+    }
+  }
+  // ===== PAGE 1 - NASTAVITEV KOTOV =====
+  else if (currentPage == 1) {
+    switch(componentId) {
+      case 19:  // bNastaviKote - začni/nadaljuj nastavitev
+        if (angleSettingMode == ANGLE_IDLE) {
+          // Začni nastavitev začetnega kota
+          angleSettingMode = ANGLE_SET_START;
+          tempAngleStart = angleSensor.getCalibratedAngle();  // Začetna vrednost
+          Serial.println("[bNastaviKote] Nastavljanje ZAČETNEGA kota - uporabite tipke Gor/Dol");
+          display.setText("bNastaviKote", "Za\xC4\x8Detni");  // "Začetni" z UTF-8
+          display.setText("tStatus_pg1", "Nastavi START kot (Gor/Dol tipke)");
+          updatePage1AngleDisplay();  // Prikaži začetno vrednost
+        }
+        else if (angleSettingMode == ANGLE_SET_START) {
+          // Shrani začetni kot in začni nastavitev končnega
+          tempAngleStart = angleSensor.getCalibratedAngle();
+          angleSettingMode = ANGLE_SET_STOP;
+          anglesChanged = true;
+          tempAngleStop = angleSensor.getCalibratedAngle();  // Začetna vrednost za končni kot
+          Serial.print("[bNastaviKote] Začetni kot nastavljen: ");
+          Serial.print(tempAngleStart, 1);
+          Serial.println("°");
+          Serial.println("[bNastaviKote] Nastavljanje KONČNEGA kota - uporabite tipke Gor/Dol");
+          display.setText("bNastaviKote", "Kon\xC4\x8Dni");  // "Končni" z UTF-8
+          display.setText("tStatus_pg1", "Nastavi STOP kot (Gor/Dol tipke)");
+          
+          // Posodobi prikaz
+          updatePage1AngleDisplay();
+          
+          // Aktiviraj bSave gumb
+          display.setButtonState("bSave", true);
+        }
+        else if (angleSettingMode == ANGLE_SET_STOP) {
+          // Shrani končni kot in resetiraj
+          tempAngleStop = angleSensor.getCalibratedAngle();
+          
+          // Validacija: Začetni kot mora biti večji od končnega
+          if (tempAngleStart <= tempAngleStop) {
+            Serial.println("[bNastaviKote] NAPAKA: Začetni kot mora biti večji od končnega!");
+            Serial.print("  Start: ");
+            Serial.print(tempAngleStart, 1);
+            Serial.print("°, Stop: ");
+            Serial.print(tempAngleStop, 1);
+            Serial.println("°");
+            
+            // Reset nastavitve
+            angleSettingMode = ANGLE_IDLE;
+            display.setText("bNastaviKote", "Nastavi");
+            display.setText("tStatus_pg1", "NAPAKA: Start > Stop!");
+            return;
+          }
+          
+          angleSettingMode = ANGLE_IDLE;
+          anglesChanged = true;
+          Serial.print("[bNastaviKote] Končni kot nastavljen: ");
+          Serial.print(tempAngleStop, 1);
+          Serial.println("°");
+          Serial.println("[bNastaviKote] Nastavitev končana - pritisnite bSave za shranitev");
+          display.setText("bNastaviKote", "Nastavi");
+          display.setText("tStatus_pg1", "Pritisnite bSave za shranitev!");
+          
+          // Posodobi prikaz
+          updatePage1AngleDisplay();
+        }
+        break;
+        
+      case 7:   // bSave - shrani kote
+        if (anglesChanged) {
+          // Validacija: Začetni kot mora biti večji od končnega
+          if (tempAngleStart <= tempAngleStop) {
+            Serial.println("[bSave] NAPAKA: Začetni kot mora biti večji od končnega!");
+            Serial.print("  Start: ");
+            Serial.print(tempAngleStart, 1);
+            Serial.print("°, Stop: ");
+            Serial.print(tempAngleStop, 1);
+            Serial.println("°");
+            display.setText("tStatus_pg1", "NAPAKA: Start > Stop!");
+            return;
+          }
+          
+          savedAngleStart = tempAngleStart;
+          savedAngleStop = tempAngleStop;
+          saveAnglesToPreferences();
+          anglesConfigured = true;
+          anglesChanged = false;
+          
+          Serial.println("[bSave] Koti shranjeni v NVS");
+          Serial.print("  Start: ");
           Serial.print(savedAngleStart, 1);
           Serial.println("°");
-          display.setStatus("Nastavi Stop kot");
-          display.setAngleRange(savedAngleStart, 0.0);
-        }
-        // Če imamo Start, shrani kot Stop
-        else if (savedAngleStop == 0.0) {
-          savedAngleStop = currentAngle;
-          Serial.print("[bSave] Končni kot shranjen: ");
+          Serial.print("  Stop: ");
           Serial.print(savedAngleStop, 1);
           Serial.println("°");
           
-          // Shrani v Preferences (NVS)
-          saveAnglesToPreferences();
-          anglesConfigured = true;
+          display.setText("tStatus_pg1", "Koti shranjeni!");
           
-          display.setStatus("Koti shranjeni!");
-          display.setAngleRange(savedAngleStart, savedAngleStop);
-          
-          Serial.println("*** KOTI KONFIGURIRANI - Sistem pripravljen ***");
+          // Deaktiviraj bSave gumb
+          display.setButtonState("bSave", false);
         }
-        // Če imamo oba, resetiraj in začni znova
-        else {
-          savedAngleStart = currentAngle;
-          savedAngleStop = 0.0;
-          anglesConfigured = false;
-          Serial.println("[bSave] Reset - nastavi nove kote");
-          Serial.print("Začetni kot: ");
-          Serial.print(savedAngleStart, 1);
-          Serial.println("°");
-          display.setStatus("Nastavi Stop kot");
-          display.setAngleRange(savedAngleStart, 0.0);
-        }
-      }
-      break;
-      
-    default:
-      Serial.print("Neznan gumb ID: ");
-      Serial.println(componentId);
-      break;
+        break;
+        
+      default:
+        Serial.print("Neznan gumb ID na page1: ");
+        Serial.println(componentId);
+        break;
+    }
   }
 }
 
@@ -212,8 +349,8 @@ void handleTouchRelease(uint8_t componentId) {
   
   S1Mode mode = inputs.getS1Mode();
   
-  // Akcije samo v MANUAL načinu
-  if (mode != MODE_MANUAL) {
+  // Akcije samo v MANUAL načinu in na page0
+  if (mode != MODE_MANUAL || currentPage != 0) {
     return;
   }
   
@@ -249,6 +386,16 @@ void loop() {
   // Posodobi prikaz kota na Nextion zaslonu
   display.setAngle(angleSensor.getCalibratedAngle());
   
+  // Če smo na page1 in nastavljamo kote, posodabljaj prikaz v realnem času
+  if (currentPage == 1 && angleSettingMode != ANGLE_IDLE) {
+    if (angleSettingMode == ANGLE_SET_START) {
+      tempAngleStart = angleSensor.getCalibratedAngle();
+    } else if (angleSettingMode == ANGLE_SET_STOP) {
+      tempAngleStop = angleSensor.getCalibratedAngle();
+    }
+    updatePage1AngleDisplay();
+  }
+  
   // Posodobi Nextion display
   display.update(currentMillis);
   
@@ -264,6 +411,16 @@ void loop() {
     if (mode == MODE_OFF) Serial.println("OFF");
     else if (mode == MODE_MANUAL) Serial.println("MANUAL");
     else if (mode == MODE_AUTO) Serial.println("AUTO");
+    
+    // Posodobi stanje gumbov glede na način (samo na page0)
+    if (currentPage == 0) {
+      bool enableButtons = (mode == MODE_MANUAL);
+      display.setButtonState("bGor", enableButtons);
+      display.setButtonState("bDol", enableButtons);
+      display.setButtonState("bBrus", enableButtons);
+      display.setButtonState("bPnev", enableButtons);
+      display.setButtonState("bSettings", enableButtons);
+    }
     
     // Ob spremembi iz AUTO v karkoli drugega ustavi cikel
     if (lastMode == MODE_AUTO && mode != MODE_AUTO) {
@@ -289,9 +446,30 @@ void loop() {
   
   // ===== ROČNI NAČIN =====
   else if (mode == MODE_MANUAL) {
-    // Kontrola vretena - fizične tipke (S41/S42) in Nextion gumbi (bGor/bDol) delujejo vzporedno
-    bool wantMoveDown = inputs.isS41DownPressed() || bDolPressed;
-    bool wantMoveUp = inputs.isS42UpPressed() || bGorPressed;
+    // Kontrola vretena - fizične tipke (S41/S42) delujejo na page0 in page1
+    // Na page0: fizične tipke ALI Nextion gumbi (bGor/bDol)
+    // Na page1: samo fizične tipke (za nastavitev kotov)
+    
+    bool wantMoveDown = false;
+    bool wantMoveUp = false;
+    
+    if (currentPage == 0) {
+      // Page0 - ročno upravljanje - delujejo fizične tipke IN Nextion gumbi
+      wantMoveDown = inputs.isS41DownPressed() || bDolPressed;
+      wantMoveUp = inputs.isS42UpPressed() || bGorPressed;
+    } 
+    else if (currentPage == 1 && (angleSettingMode == ANGLE_SET_START || angleSettingMode == ANGLE_SET_STOP)) {
+      // Page1 - med nastavljanjem kotov - samo fizične tipke
+      wantMoveDown = inputs.isS41DownPressed();
+      wantMoveUp = inputs.isS42UpPressed();
+      
+      // Posodobi začasni kot med nastavljanjem
+      if (angleSettingMode == ANGLE_SET_START) {
+        tempAngleStart = angleSensor.getCalibratedAngle();
+      } else if (angleSettingMode == ANGLE_SET_STOP) {
+        tempAngleStop = angleSensor.getCalibratedAngle();
+      }
+    }
     
     if (wantMoveDown && !wantMoveUp) {
       // Premik dol (prioriteta ima DOL, če sta obe pritisnjena)
@@ -523,4 +701,27 @@ void clearAnglesFromPreferences() {
   preferences.end();
   
   Serial.println("Vsi shranjeni podatki izbrisani iz NVS");
+}
+
+void updatePage1AngleDisplay() {
+  // Posodobi prikaz kotov na page1
+  display.setAngleRange(tempAngleStart, tempAngleStop);
+  
+  // Nastavi globalne spremenljivke
+  display.setGlobalVariable("vaAngleStart", (int32_t)(tempAngleStart * 10));
+  display.setGlobalVariable("vaAngleStop", (int32_t)(tempAngleStop * 10));
+  
+  // Posodobi tudi Xfloat objekte (id=5 in id=6) - format angle*10 za decimalna mesta
+  display.setNumber("xStartAngle", (int32_t)(tempAngleStart * 10));
+  display.setNumber("xEndAngle", (int32_t)(tempAngleStop * 10));
+}
+
+void updateBNastaviKoteText() {
+  if (angleSettingMode == ANGLE_IDLE) {
+    display.setText("bNastaviKote", "Nastavi");
+  } else if (angleSettingMode == ANGLE_SET_START) {
+    display.setText("bNastaviKote", "Za\xC4\x8Detni");  // "Začetni"
+  } else if (angleSettingMode == ANGLE_SET_STOP) {
+    display.setText("bNastaviKote", "Kon\xC4\x8Dni");  // "Končni"
+  }
 }

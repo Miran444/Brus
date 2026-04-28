@@ -226,36 +226,25 @@ ESP32 bo preko kode spremenil barvo texta: `bBrus.pco=0` (aktiven - črna) ali `
 
 ---
 
-### Korak 8a: Button bSave za shranjevanje kotov (Page 0)
+### Korak 8a: Button bSettings za prehod na Page 1 (nastavitve)
 
-**Button SAVE:**
+**Button SETTINGS:**
 1. Toolbox → **Button**
-2. Position: **X=10, Y=200, W=80, H=60**
+2. Position: **X=420, Y=10, W=60, H=40**
 3. Properties:
-   - **objname**: `bSave`
-   - **txt**: `SAVE`
-   - **font**: size 2
+   - **objname**: `bSettings`
+   - **id**: 16
+   - **txt**: `⚙`  (ali "SET")
+   - **font**: size 3
    - **pco**: 65535
    - **bco**: 1024 (modra)
 
-**Touch Press Event za bSave (Page 0):**
-1. Desni klik na **bSave** → **Event**
-2. Nastavite **Send Component ID** na **enabled** (ID=7)
-3. V **Touch Press Event** pustite prazno (ESP32 bo prejel ID=7)
+**Touch Press Event za bSettings:**
+1. Desni klik na **bSettings** → **Event**
+2. Nastavite **Send Component ID** na **enabled** (ID=16)
+3. V **Touch Press Event** pustite prazno (ESP32 bo prejel ID=16 in preklopil na page1)
 
-**Logika shranjevanja:**
-1. **Prvi pritisk**: Shrani trenutni kot kot **Start angle**
-   - Display prikaže: "Nastavi Stop kot"
-   - Globalna spremenljivka `vaAngleStart` se posodobi
-2. **Drugi pritisk**: Shrani trenutni kot kot **Stop angle**
-   - Display prikaže: "Koti shranjeni!"
-   - Globalna spremenljivka `vaAngleStop` se posodobi
-   - Koti se shranijo v ESP32 NVS (Preferences)
-3. **Tretji pritisk**: Resetira proces - začne znova od koraka 1
-
-**Reset kotov:**
-- Fizična tipka **RESET** (IN_RESET) briše vse shranjene kote
-- Po pritisku RESET morate ponovno nastaviti Start in Stop kot
+**OPOMBA:** Gumb bSettings je aktiven samo v MANUAL načinu. ESP32 avtomatsko upravlja njegovo aktivacijo.
 
 ---
 
@@ -300,17 +289,46 @@ ESP32 bo preko kode spremenil barvo texta: `bBrus.pco=0` (aktiven - črna) ali `
 
 ---
 
-## 3. PAGE 1 - NASTAVITVE (opcijsko)
+## 3. PAGE 1 - NASTAVITVE KOTOV
 
-Ko boste ustvarili Page 1, jo lahko uporabite za:
-- Nastavitve števila ciklov
-- Nastavitve kotov (Start/Stop)
-- Prikaz števila obratov (nRev)
-- Gumb za vrnitev na Page 0
+Page 1 je namenjena nastavitvi začetnega in končnega kota za avtomatsko delovanje.  
+**Dostop**: S pritiskom na gumb **bSettings** na Page 0 (samo v MANUAL načinu).
 
-**Osnovna struktura Page 1:**
+**POMEMBNO - Smer delovanja:**
+- **Začetni kot (StartAngle)** mora biti VEČJI od končnega kota (EndAngle)
+- Primer: StartAngle = 28.0°, EndAngle = 5.0°
+- **Avtomatski cikel**: Začetni → Končni → Začetni (vreteno gre DOL → GOR → DOL)
+- Vreteno se spušča od višjega kota (npr. 28°) proti nižjemu kotu (npr. 5°)
 
-### Xfloat za vnos začetnega kota:
+### Korak 1: Status prikaz za Page 1
+1. Toolbox → **Text** → povlecite na zaslon
+2. Position: **X=10, Y=10, W=460, H=50**
+3. Properties:
+   - **objname**: `tStatus_pg1`
+   - **id**: 21 (Component ID)
+   - **txt**: `Vnesi kote ali uporabi Nastavi gumb`
+   - **font**: size 2
+   - **pco** (text color): 65535 (bela)
+   - **bco** (background): 1024 (modra)
+   - **xcen**: 1 (center horizontalno)
+   - **ycen**: 1 (center vertikalno)
+
+**OPOMBA:** tStatus_pg1 prikazuje informativna sporočila (max 50 znakov):
+- "Vnesi kote ali uporabi Nastavi gumb" - začetno stanje
+- "Nastavi START kot (Gor/Dol tipke)" - med nastavljanjem
+- "Koti OK - pritisnite bSave!" - po uspešnem vnosu
+- "NAPAKA: Start > Stop!" - napaka pri validaciji
+- "Koti shranjeni!" - uspešno shranjevanje
+
+---
+
+### Dve možnosti nastavitve kotov:
+
+---
+
+### VARIANTA 1: Ročni vnos kotov (Xfloat objekti)
+
+**Xfloat za vnos začetnega kota:**
 1. Toolbox → **Xfloat**
 2. Position: **X=50, Y=80, W=150, H=60**
 3. Properties:
@@ -318,11 +336,11 @@ Ko boste ustvarili Page 1, jo lahko uporabite za:
    - **id**: 5 (Component ID)
    - **vvs0**: 1 (omogoči numeric keyboard)
    - **vvs1**: 1 (ena decimalna mesta)
-   - **minval**: 0
-   - **maxval**: 300 (30.0° * 10)
-   - **val**: 50 (privzeto 5.0°)
+   - **minval**: 50 (min 5.0°)
+   - **maxval**: 300 (max 30.0° * 10)
+   - **val**: 280 (privzeto 28.0° - ZAČETNI kot je večji!)
 
-### Xfloat za vnos končnega kota:
+**Xfloat za vnos končnega kota:**
 1. Toolbox → **Xfloat**
 2. Position: **X=250, Y=80, W=150, H=60**
 3. Properties:
@@ -330,34 +348,110 @@ Ko boste ustvarili Page 1, jo lahko uporabite za:
    - **id**: 6
    - **vvs0**: 1
    - **vvs1**: 1
-   - **minval**: 0
-   - **maxval**: 300
-   - **val**: 280 (privzeto 28.0°)
+   - **minval**: 50 (min 5.0°)
+   - **maxval**: 300 (max 30.0°)
+   - **val**: 50 (privzeto 5.0° - KONČNI kot je manjši!)
 
-### Button za shranjevanje:
+**Touch Release Event za xStartAngle in xEndAngle:**
+```
+// Pošlji podatke na ESP32
+covx xStartAngle.val,vaStartAngle.txt,0,0
+covx xEndAngle.val,vaEndAngle.txt,0,0
+prints "ID5:",4
+prints vaStartAngle.txt,4
+prints ";ID6:",5
+prints vaEndAngle.txt,4
+printh ff ff ff
+```
+
+**OPOMBA:** Potrebujete začasne string variable:
+- **vaStartAngle** (String Variable)
+- **vaEndAngle** (String Variable)
+
+---
+
+### VARIANTA 2: Nastavitev s fizičnimi tipkami (bNastaviKote)
+
+**Button bNastaviKote:**
 1. Toolbox → **Button**
-2. Position: **X=150, Y=180, W=180, H=60**
+2. Position: **X=50, Y=200, W=150, H=60**
+3. Properties:
+   - **objname**: `bNastaviKote`
+   - **id**: 19
+   - **txt**: `Nastavi`
+   - **font**: size 2
+   - **pco**: 65535
+   - **bco**: 1024 (modra)
+
+**Touch Press Event za bNastaviKote:**
+1. Desni klik na **bNastaviKote** → **Event**
+2. Nastavite **Send Component ID** na **enabled** (ID=19)
+3. ESP32 bo avtomatsko spreminjal besedilo gumba:
+   - **"Nastavi"** - začetno stanje
+   - **"Začetni"** - nastavljanje začetnega kota s tipkami Gor/Dol
+   - **"Končni"** - nastavljanje končnega kota s tipkami Gor/Dol
+
+**Delovanje:**
+1. **Prvi pritisk**: Aktivira nastavljanje začetnega kota
+   - Besedilo se spremeni v "Začetni"
+   - Uporabite fizične tipke **S42 (Gor)** in **S41 (Dol)** za premik vretena
+   - Trenutni kot se prikazuje v `tAngle` (Page 0 in Page 1)
+   - Kot se prikazuje tudi v **xStartAngle** (id=5) v formatu Angle*10 (npr. 280 = 28.0°)
+2. **Drugi pritisk**: Shrani začetni kot in aktivira nastavljanje končnega
+   - Besedilo se spremeni v "Končni"
+   - Ponovno uporabite tipke Gor/Dol za nastavitev končnega kota
+   - Kot se prikazuje v **xEndAngle** (id=6) v formatu Angle*10 (npr. 50 = 5.0°)
+   - Gumb **bSave** se aktivira (postane klikabilen)
+3. **Tretji pritisk**: Shrani končni kot in resetira
+   - Besedilo se vrne na "Nastavi"
+   - Koti so pripravljeni za shranitev
+   - **POMEMBNO**: Začetni kot mora biti večji od končnega (StartAngle > EndAngle)
+
+---
+
+### Button za shranjevanje (bSave):
+1. Toolbox → **Button**
+2. Position: **X=250, Y=200, W=150, H=60**
 3. Properties:
    - **objname**: `bSave`
    - **id**: 7
    - **txt**: `SHRANI`
+   - **font**: size 2
+   - **pco**: 54970 (siva - neaktiven ob zagonu)
+   - **bco**: 2016 (zelena)
 
-**Touch Release Event za bSave:**
+**Touch Press Event za bSave:**
+1. Desni klik na **bSave** → **Event**
+2. V **Touch Press Event** vnesite validacijsko kodo:
+
+```
+// Preveri: Začetni kot mora biti večji od končnega!
+if(xStartAngle.val<=xEndAngle.val)
+{
+  // NAPAKA: Začetni <= Končni
+  tStatus.txt="NAPAKA: Start > Stop!"
+  tStatus.bco=63488
+}
+else
+{
+  // Validacija OK - pošlji podatke na ESP32
+  // Nastavite Send Component ID na enabled (ID=7)
+  // ESP32 bo prejel Touch Press Event z ID=7
+}
+```
+
+**ALI (če želite dodatno validacijo v Nextion HMI):**
+
 ```
 // Konvertiraj float v string
 covx xStartAngle.val,vaStartAngle.txt,0,0
 covx xEndAngle.val,vaEndAngle.txt,0,0
 
-// Validacija vrednosti
-if(xStartAngle.val>vaMaxAngle.val)
+// Validacija: Začetni > Končni
+if(xStartAngle.val<=xEndAngle.val)
 {
-  // Start angle je večji od maksimuma
-  page 2
-}
-else if(xEndAngle.val<vaMinAngle.val)
-{
-  // End angle je manjši od minimuma
-  page 2
+  tStatus.txt="NAPAKA: Start > Stop!"
+  tStatus.bco=63488
 }
 else
 {
@@ -370,14 +464,27 @@ else
 }
 ```
 
-**OPOMBA:** Potrebuješ:
-- **vaStartAngle** (String Variable, za temp shranjevanje)
-- **vaEndAngle** (String Variable, za temp shranjevanje)
-- **vaMaxAngle** (Number Variable - globalna, nastavi se na Page 3 ali iz ESP32)
-- **vaMinAngle** (Number Variable - globalna, nastavi se na Page 3 ali iz ESP32)
-- **vaAngleStart** (Number Variable - globalna, posodobi se avtomatsko)
-- **vaAngleStop** (Number Variable - globalna, posodobi se avtomatsko)
-- **Page 2** - Error stran (opcijsko, lahko tudi samo prikaže sporočilo)
+**Pomembno:**
+- **Začetni kot (StartAngle)** mora biti **večji** od **končnega kota (EndAngle)**
+- Primer pravilnih vrednosti: Start = 28.0°, Stop = 5.0° ✓
+- Primer napačnih vrednosti: Start = 5.0°, Stop = 28.0° ✗
+
+**Razlog:** 
+Avtomatski cikel deluje tako, da se vreteno premakne od višjega kota (Start) do nižjega kota (Stop) in nazaj: **Start → Stop → Start**
+
+ESP32 bo dodatno preveril validacijo pred shranjevanjem v NVS za dvojno varnost.
+
+**OPOMBA:** Gumb bSave se aktivira šele ko:
+- Uporabite bNastaviKote za nastavitev obeh kotov, ALI
+- Spremenite vrednosti v xStartAngle/xEndAngle
+
+**Potrebne spremenljivke:**
+- **vaStartAngle** (String Variable, za temp shranjevanje pri Xfloat validaciji)
+- **vaEndAngle** (String Variable, za temp shranjevanje pri Xfloat validaciji)
+- **vaAngleStart** (Number Variable - globalna, posodobi se avtomatsko, format: kot*10)
+- **vaAngleStop** (Number Variable - globalna, posodobi se avtomatsko, format: kot*10)
+
+---
 
 ### Button za nazaj:
 1. Toolbox → **Button**

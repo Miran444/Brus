@@ -623,32 +623,38 @@ Ustvarite v **Tools → Variables** (na page0):
 - Referenčni hod se NE začne avtomatsko ob prehodu na page3
 - Uporabnik mora pritisniti **bRefStart** gumb
 
-**Faza 1: Iskanje minimalnega kota**
-1. Vreteno se premika navzdol (SPINDLE_DOWN)
-2. Stalno se posodablja `tActualAngle` s trenutnim kotom iz AS5600
-3. Ko se aktivira **S43 končno stikalo** (vreteno v spodnjem položaju ~0°):
-   - Zabeleži minimalni kot: `minAngle = angleSensor.getCalibratedAngle()`
-   - Posodobi `tMinAngle` na displayu
-   - Shrani v globalno spremenljivko: `vaMinAngle = minAngle × 10`
-   - Ustavi vreteno
+**Faza 1A: Iskanje najnižje točke**
+1. Vreteno gre navzdol (`moveSpindleDown`)
+2. Ko **S43 preklopi na "1"** (aktiven) → ustavimo motor (dosežena najnižja točka)
 
-**Faza 2: Iskanje maksimalnega kota**
-1. Resetira števec obratov (S45)
-2. Začne merjenje časa
-3. Vreteno se premika navzgor (SPINDLE_UP)
-4. Stalno se posodablja `tActualAngle` in `tMRev` (število obratov)
-5. Spremlja spremembo kota (∆angle):
-   - Če se kot ne spremeni več določeno število obratov (50) → dosežen max kot
-   - ALI če je dodano **končno stikalo za max pozicijo** → uporabi stikalo
-6. Ko je max dosežen:
-   - Ustavi motor
-   - **FAZA 3: USTALJANJE** - Počaka 1 sekundo da se vreteno ustali in poskoči nazaj (kot se malo zmanjša)
-   - Zabeleži maksimalni kot: `maxAngle = angleSensor.getCalibratedAngle()`
-   - Ustavi štetje časa
-   - Posodobi `tMaxAngle` na displayu
-   - Shrani v globalno spremenljivko: `vaMaxAngle = maxAngle × 10`
+**Faza 1B: Določitev MIN kota**
+1. Obrnemo smer motorja → vreteno gre navzgor (`moveSpindleUp`)
+2. Ko **S43 preklopi na "0"** (neaktiven):
+   - Začnemo z merjenjem časa: `refStartTime = millis()`
+   - Shranimo trenutni kot kot `startMeasurementAngle`
+3. Nadaljujemo navzgor še **0.5° od startMeasurementAngle**
+4. Ko dosežemo `currentAngle = startMeasurementAngle + 0.5°`:
+   - `minAngle = currentAngle` (to je naš minimalni delovni kot)
+   - Resetiramo števec obratov S45 (začnemo šteti od minAngle naprej)
+   - Display posodobi `tMinAngle`
 
-**POMEMBNO:** Zaradi teže vretena se ob ustavitvi motor malo poskoči nazaj navzdol. Sistem počaka 1 sekundo in nato prebere končni max kot za natančnejše merjenje.
+**Faza 2: Iskanje MAX kota**
+1. Nadaljujemo navzgor (motor že teče)
+2. Stalno štejemo obrate (S45 - IN_S45_STEVEC)
+3. Ko se **S46 končno stikalo** aktivira ("1"):
+   - Vreteno je doseglo zgornji položaj
+   - Ustavimo motor
+   - Ustavimo merjenje časa
+   - Izračunamo `maxAngle = currentAngle - 0.5°` (toleranca)
+   - Display posodobi `tMaxAngle` in `tMRev`
+
+**POMEMBNO:** 
+- **S43** je varnostno končno stikalo (najnižji položaj) - vezano na IN_S43_SAFETY
+- **S46** je končno stikalo (najvišji položaj) - vezano na IN_USER
+- **Sekvenca**: S43="1"(ustavi)→obrni smer→S43="0"(začni merjenje)→+0.5°(minAngle)→...→S46="1"(maxAngle-0.5°)
+- **Toleranca 0.5°**: Zagotavlja, da mejni koti ostanejo znotraj varnih mej (odmik od stikal)
+- **Merjenje časa**: Se začne šele ko S43 postane neaktiven (iz najnižje točke navzgor)
+- **Merjenje obratov**: Se začne ko določimo minAngle (od 0.5° nad S43 preklopom naprej)
 
 **Faza 3: Izračun in shranjevanje**
 1. Izračuna:
@@ -665,7 +671,10 @@ Ustvarite v **Tools → Variables** (na page0):
 - Po končanem referenčnem hodu lahko uporabnik:
   - Pritisne **bBackFromRef** → vrne se na page1
   - Vrednosti min/max se avtomatsko uporabijo na page1 za validacijo kotov
-- **Ustaljanje pri max kotu**: Sistem počaka 1s po ustavitvi, kar omogoči natančnejše merjenje zaradi poskoka vretena
+- **Končni stikali S43 in S46**: Omogočata zanesljivo detekcijo mejnih leg
+- **Toleranca 0.5°**: Zagotavlja, da se vreteno nikoli ne premakne preveč proti stikalom
+- **Merjenje obratov**: Šteje samo pot od minAngle do maxAngle (za natančen revPerAngle)
+- **Uporaba v AUTO načinu**: revPerAngle in čas se uporabita za spremljanje poteka in detekcijo napak
 
 ---
 

@@ -51,22 +51,18 @@ bool anglesChanged = false;  // Ali so se koti spremenili (za aktivacijo bSave)
 // Page3 - Referenčni hod
 enum ReferenceState {
   REF_IDLE = 0,           // Ni aktivno
-  REF_FIND_MIN = 1,       // Iščemo minimalni kot (navzdol do S43)
-  REF_FIND_MAX = 2,       // Iščemo maksimalni kot (navzgor)
-  REF_SETTLE_MAX = 3,     // Čakamo da se vreteno ustali in poskoči
-  REF_COMPLETE = 4        // Končano
+  REF_FIND_MIN_DOWN = 1,  // Iščemo najnižjo točko (navzdol do S43 aktiven)
+  REF_FIND_MIN_UP = 2,    // Gremo gor do S43 neaktiven + 0.5°
+  REF_FIND_MAX = 3        // Iščemo maksimalni kot (navzgor do S46)
 };
 ReferenceState refState = REF_IDLE;
 float measuredMinAngle = 0.0;
 float measuredMaxAngle = 0.0;
+float startMeasurementAngle = 0.0;  // Kot ko S43 postane neaktiven
 uint32_t refStartTime = 0;
 uint32_t refRevolutions = 0;
 uint32_t lastRevCount = 0;
-float lastAngleCheck = 0.0;
-uint32_t stableAngleCounter = 0;  // Števec za detekcijo statističnega kota
-uint32_t settleStartTime = 0;     // Čas začetka ustaljanja
-#define STABLE_ANGLE_REVS 50  // Število obratov brez spremembe kota = max dosežen
-#define SETTLE_TIME_MS 1000    // Čas za ustaljanje vretena (1 sekunda)
+#define ANGLE_TOLERANCE 0.5  // Toleranca 0.5° od S43/S46 stikal
 
 // Deklaracije funkcij
 void handleNextionEvents();
@@ -266,7 +262,7 @@ void handleTouchPress(uint8_t componentId) {
           angleSettingMode = ANGLE_SET_START;
           tempAngleStart = angleSensor.getCalibratedAngle();  // Začetna vrednost
           Serial.println("[bNastaviKote] Nastavljanje ZAČETNEGA kota - uporabite tipke Gor/Dol");
-          display.setText("bNastaviKote", "Za\xC4\x8Detni");  // "Začetni" z UTF-8
+          display.setText("bNastaviKote", "Zacetni");  // "Začetni" z UTF-8
           display.setText("tStatus_pg1", "Nastavi START kot (Gor/Dol tipke)");
           updatePage1AngleDisplay();  // Prikaži začetno vrednost
         }
@@ -280,7 +276,7 @@ void handleTouchPress(uint8_t componentId) {
           Serial.print(tempAngleStart, 1);
           Serial.println("°");
           Serial.println("[bNastaviKote] Nastavljanje KONČNEGA kota - uporabite tipke Gor/Dol");
-          display.setText("bNastaviKote", "Kon\xC4\x8Dni");  // "Končni" z UTF-8
+          display.setText("bNastaviKote", "Koncni");  // "Končni" z UTF-8
           display.setText("tStatus_pg1", "Nastavi STOP kot (Gor/Dol tipke)");
           
           // Posodobi prikaz
@@ -385,7 +381,7 @@ void handleTouchPress(uint8_t componentId) {
   else if (currentPage == 3) {
     switch(componentId) {
       case 3:  // bRefStart - začni referenčni hod
-        if (refState == REF_IDLE || refState == REF_COMPLETE) {
+        if (refState == REF_IDLE) {
           Serial.println("[bRefStart] Začetek referenčnega hoda");
           startReferenceRun();
         }
@@ -453,7 +449,7 @@ void loop() {
   }
   
   // Če smo na page3 in izvajamo referenčni hod, posodabljaj
-  if (currentPage == 3 && (refState == REF_FIND_MIN || refState == REF_FIND_MAX || refState == REF_SETTLE_MAX)) {
+  if (currentPage == 3 && (refState == REF_FIND_MIN_DOWN || refState == REF_FIND_MIN_UP || refState == REF_FIND_MAX)) {
     updateReferenceRun();
   }
   
@@ -797,15 +793,14 @@ void startReferenceRun() {
   // Reset spremenljivk
   measuredMinAngle = 0.0;
   measuredMaxAngle = 0.0;
+  startMeasurementAngle = 0.0;
   refRevolutions = 0;
   lastRevCount = inputs.getRevolutions();
-  stableAngleCounter = 0;
-  lastAngleCheck = 0.0;
-  settleStartTime = 0;
+  refStartTime = 0;  // Začnemo meriti šele ko S43 postane neaktiven
   
-  // Faza 1: Iskanje minimalnega kota
-  refState = REF_FIND_MIN;
-  Serial.println("Faza 1: Iskanje MIN kota - vreteno gre navzdol...");
+  // Faza 1: Iskanje najnižje točke
+  refState = REF_FIND_MIN_DOWN;
+  Serial.println("Faza 1: Iskanje najnižje točke - vreteno gre navzdol do S43 aktiven...");
   
   // Začni premik navzdol
   outputs.moveSpindleDown(SPINDLE_SPEED_MEDIUM);
@@ -820,41 +815,68 @@ void startReferenceRun() {
 
 void updateReferenceRun() {
   float currentAngle = angleSensor.getCalibratedAngle();
+  char angleStr[10];
   
   // Posodobi prikaz trenutnega kota (stalno!)
-  char angleStr[10];
   sprintf(angleStr, "%.1f", currentAngle);
   display.setText("tActualAngle", angleStr);
   
-  // === FAZA 1: ISKANJE MIN KOTA ===
-  if (refState == REF_FIND_MIN) {
-    // Preveri ali je doseženo končno stikalo S43
+  // === FAZA 1A: ISKANJE NAJNIŽJE TOČKE (DOL DO S43) ===
+  if (refState == REF_FIND_MIN_DOWN) {
+    // Preveri ali je S43 aktiven (najnižja točka)
     if (inputs.isSpindleAtBottom()) {
-      // Dosežen minimalni kot!
-      measuredMinAngle = currentAngle;
+      // S43 je aktiven - dosežena najnižja točka!
       outputs.stopSpindle();
+      delay(200);  // Kratka zakasnitev pred obratom smeri
       
-      Serial.print("MIN kot dosežen: ");
-      Serial.print(measuredMinAngle, 1);
-      Serial.println("° (S43 stikalo aktivno)");
+      Serial.println("S43 aktiven - najnižja točka dosežena, obračam smer...");
       
-      // Posodobi display
-      sprintf(angleStr, "%.1f", measuredMinAngle);
-      display.setText("tMinAngle", angleStr);
-      
-      // Počakaj malo pred začetkom faze 2
-      delay(500);
-      
-      // Začni fazo 2: Iskanje MAX kota
-      refState = REF_FIND_MAX;
-      refStartTime = millis();
-      lastRevCount = inputs.getRevolutions();
-      refRevolutions = 0;
-      lastAngleCheck = measuredMinAngle;
-      stableAngleCounter = 0;
-      
-      Serial.println("Faza 2: Iskanje MAX kota - vreteno gre navzgor...");
+      // Obrni smer - začni iti gor
+      refState = REF_FIND_MIN_UP;
+      Serial.println("Faza 1B: Vreteno gre gor - čakam S43 neaktiven + 0.5°...");
       outputs.moveSpindleUp(SPINDLE_SPEED_MEDIUM);
+    }
+  }
+  
+  // === FAZA 1B: ISKANJE MIN KOTA (GOR OD S43 + 0.5°) ===
+  else if (refState == REF_FIND_MIN_UP) {
+    // Čakamo da S43 postane neaktiven
+    if (!inputs.isSpindleAtBottom() && startMeasurementAngle == 0.0) {
+      // S43 se je preklopil na "0" - začnemo merjenje!
+      startMeasurementAngle = currentAngle;
+      refStartTime = millis();  // Začni merjenje časa
+      
+      Serial.print("S43 preklop na 0 - začetek merjenja pri ");
+      Serial.print(startMeasurementAngle, 1);
+      Serial.println("°");
+    }
+    
+    // Če smo začeli merjenje, preveri ali smo prešli 0.5° od začetnega kota
+    if (startMeasurementAngle > 0.0) {
+      float deltaNadjenih = currentAngle - startMeasurementAngle;
+      
+      if (deltaNadjenih >= ANGLE_TOLERANCE) {
+        // Prešli smo 0.5° - to je minAngle!
+        measuredMinAngle = currentAngle;
+        
+        Serial.print("MIN kot dosežen: ");
+        Serial.print(measuredMinAngle, 1);
+        Serial.println("° (0.5° nad S43 preklopom)");
+        
+        // Posodobi display
+        sprintf(angleStr, "%.1f", measuredMinAngle);
+        display.setText("tMinAngle", angleStr);
+        
+        // Resetiraj števec obratov - začnemo šteti od tu naprej
+        inputs.resetRevolutions();
+        lastRevCount = 0;
+        refRevolutions = 0;
+        
+        // Preklopi na fazo 2
+        refState = REF_FIND_MAX;
+        Serial.println("Faza 2: Iskanje MAX kota - vreteno gre navzgor do S46...");
+        // Motor že teče gor, samo nadaljujemo
+      }
     }
   }
   
@@ -872,48 +894,19 @@ void updateReferenceRun() {
       display.setText("tMRev", revStr);
     }
     
-    // Preveri če se kot še spreminja
-    float angleDelta = abs(currentAngle - lastAngleCheck);
-    
-    if (angleDelta < 0.1) {  // Sprememba manjša od 0.1° = stabilno
-      stableAngleCounter++;
-    } else {
-      stableAngleCounter = 0;  // Reset če se kot spremeni
-      lastAngleCheck = currentAngle;
-      measuredMaxAngle = currentAngle;  // Posodobi max kot
-    }
-    
-    // Če je kot stabilen N obratov = dosežen MAX
-    if (stableAngleCounter >= STABLE_ANGLE_REVS) {
+    // Preveri ali je doseženo končno stikalo S46
+    if (inputs.isSpindleAtTop()) {
+      // S46 je aktiven - dosežen MAX kot!
       outputs.stopSpindle();
       
-      Serial.print("MAX kot detektiran: ");
+      // Max kot je 0.5° manj od trenutnega
+      measuredMaxAngle = currentAngle - ANGLE_TOLERANCE;
+      
+      Serial.print("S46 aktiven - MAX kot dosežen: ");
       Serial.print(measuredMaxAngle, 1);
-      Serial.println("° (kot stabilen)");
-      Serial.println("Čakam da se vreteno ustali in poskoči nazaj...");
+      Serial.println("° (-0.5° toleranca)");
       
-      // Posodobi display - začasna vrednost
-      sprintf(angleStr, "%.1f", measuredMaxAngle);
-      display.setText("tMaxAngle", angleStr);
-      
-      // Preklopi v fazo ustaljanja
-      refState = REF_SETTLE_MAX;
-      settleStartTime = millis();
-    }
-  }
-  
-  // === FAZA 3: USTALJANJE MAX KOTA ===
-  else if (refState == REF_SETTLE_MAX) {
-    // Počakaj da se vreteno ustali in poskoči nazaj
-    if (millis() - settleStartTime >= SETTLE_TIME_MS) {
-      // Preberi končni max kot po ustaljivanju
-      measuredMaxAngle = currentAngle;
-      
-      Serial.print("MAX kot po ustaljivanju: ");
-      Serial.print(measuredMaxAngle, 1);
-      Serial.println("°");
-      
-      // Posodobi display s končno vrednostjo
+      // Posodobi display
       sprintf(angleStr, "%.1f", measuredMaxAngle);
       display.setText("tMaxAngle", angleStr);
       
@@ -924,7 +917,7 @@ void updateReferenceRun() {
 }
 
 void finishReferenceRun() {
-  refState = REF_COMPLETE;
+  refState = REF_IDLE;
   
   // Izračunaj statistiko
   float angleRange = measuredMaxAngle - measuredMinAngle;

@@ -182,6 +182,11 @@ bool BrusInputs::isSpindleAtBottom() {
     return getInputBit(IN_S43_SAFETY);
 }
 
+bool BrusInputs::isSpindleAtTop() {
+    // S46 - končno stikalo pri MAX kotu (IN_USER vhod)
+    return getInputBit(IN_USER);
+}
+
 // ===== AS5600 FUNKCIJE =====
 float BrusInputs::getSpindleAngle() {
     if (angleEncoder->isSensorPresent()) {

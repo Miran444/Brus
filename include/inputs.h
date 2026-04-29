@@ -50,6 +50,7 @@ public:
     // Branje senzorjev
     bool isSpindleTilted();     // Naklon < 10° (AS5600 ali S44)
     bool isSpindleAtBottom();   // Spodnji položaj ~0° (S43 - varnostno)
+    bool isSpindleAtTop();      // Zgornji položaj MAX (S46 - končno stikalo)
     unsigned long getRevolutions(); // Števec obratov
     void resetRevolutions();
     

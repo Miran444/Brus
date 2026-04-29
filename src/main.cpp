@@ -36,6 +36,11 @@ float savedAngleStart = 0.0;
 float savedAngleStop = 0.0;
 bool anglesConfigured = false;  // Ali sta kota nastavljena
 
+// Kalibrirani min/max koti iz referenčnega hoda (že z 0.5° toleranco)
+float calibratedMinAngle = 0.0;  // Minimalni kot
+float calibratedMaxAngle = 0.0;  // Maksimalni kot
+bool anglesCalibrated = false;   // Ali je bila opravljena kalibracija
+
 // Page1 - Nastavitev kotov
 uint8_t currentPage = 0;  // Trenutna stran (0=page0, 1=page1)
 enum AngleSettingMode {
@@ -305,6 +310,40 @@ void handleTouchPress(uint8_t componentId) {
             return;
           }
           
+          // Preveri ali so koti znotraj kalibriranih limitov
+          if (anglesCalibrated) {
+            if (tempAngleStart > calibratedMaxAngle) {
+              Serial.print("[bNastaviKote] NAPAKA: Start ");
+              Serial.print(tempAngleStart, 1);
+              Serial.print("° presega max limit ");
+              Serial.print(calibratedMaxAngle, 1);
+              Serial.println("°");
+              
+              angleSettingMode = ANGLE_IDLE;
+              display.setText("bNastaviKote", "Nastavi");
+              char msg[50];
+              sprintf(msg, "NAPAKA: Start>%.1f!", calibratedMaxAngle);
+              display.setText("tStatus_pg1", msg);
+              return;
+            }
+            if (tempAngleStop < calibratedMinAngle) {
+              Serial.print("[bNastaviKote] NAPAKA: Stop ");
+              Serial.print(tempAngleStop, 1);
+              Serial.print("° presega min limit ");
+              Serial.print(calibratedMinAngle, 1);
+              Serial.println("°");
+              
+              angleSettingMode = ANGLE_IDLE;
+              display.setText("bNastaviKote", "Nastavi");
+              char msg[50];
+              sprintf(msg, "NAPAKA: Stop<%.1f!", calibratedMinAngle);
+              display.setText("tStatus_pg1", msg);
+              return;
+            }
+          } else {
+            Serial.println("[bNastaviKote] OPOZORILO: Koti niso preverjeni - kalibracija ni opravljena!");
+          }
+          
           angleSettingMode = ANGLE_IDLE;
           anglesChanged = true;
           Serial.print("[bNastaviKote] Končni kot nastavljen: ");
@@ -348,6 +387,36 @@ void handleTouchPress(uint8_t componentId) {
             Serial.println("°");
             display.setText("tStatus_pg1", "NAPAKA: Start > Stop!");
             return;
+          }
+          
+          // Preveri ali so koti znotraj kalibriranih limitov
+          if (anglesCalibrated) {
+            if (tempAngleStart > calibratedMaxAngle) {
+              Serial.print("[bSave] NAPAKA: Start ");
+              Serial.print(tempAngleStart, 1);
+              Serial.print("° presega max limit ");
+              Serial.print(calibratedMaxAngle, 1);
+              Serial.println("°");
+              char msg[50];
+              sprintf(msg, "NAPAKA: Start>%.1f!", calibratedMaxAngle);
+              display.setText("tStatus_pg1", msg);
+              return;
+            }
+            if (tempAngleStop < calibratedMinAngle) {
+              Serial.print("[bSave] NAPAKA: Stop ");
+              Serial.print(tempAngleStop, 1);
+              Serial.print("° presega min limit ");
+              Serial.print(calibratedMinAngle, 1);
+              Serial.println("°");
+              char msg[50];
+              sprintf(msg, "NAPAKA: Stop<%.1f!", calibratedMinAngle);
+              display.setText("tStatus_pg1", msg);
+              return;
+            }
+            Serial.println("[bSave] Koti preverjeni - znotraj limitov");
+          } else {
+            Serial.println("[bSave] OPOZORILO: Koti niso preverjeni - kalibracija ni opravljena!");
+            display.setText("tStatus_pg1", "Opozorilo: Ni kalibracije!");
           }
           
           savedAngleStart = tempAngleStart;
@@ -528,6 +597,31 @@ void loop() {
       }
     }
     
+    // Varnostna preverjanja limitov (če je kalibracija opravljena)
+    float currentAngle = angleSensor.getCalibratedAngle();
+    if (anglesCalibrated) {
+      if (wantMoveUp && currentAngle >= calibratedMaxAngle) {
+        outputs.stopSpindle();
+        if (currentPage == 0) {
+          display.setStatus("ALARM: Max limit!");
+        } else if (currentPage == 1) {
+          display.setText("tStatus_pg1", "ALARM: Max limit!");
+        }
+        Serial.println("ALARM: Dosežen maksimalni limit!");
+        wantMoveUp = false;
+      }
+      if (wantMoveDown && currentAngle <= calibratedMinAngle) {
+        outputs.stopSpindle();
+        if (currentPage == 0) {
+          display.setStatus("ALARM: Min limit!");
+        } else if (currentPage == 1) {
+          display.setText("tStatus_pg1", "ALARM: Min limit!");
+        }
+        Serial.println("ALARM: Dosežen minimalni limit!");
+        wantMoveDown = false;
+      }
+    }
+    
     if (wantMoveDown && !wantMoveUp) {
       // Premik dol (prioriteta ima DOL, če sta obe pritisnjena)
       if (!outputs.isSpindleMoving() || outputs.getSpindleDirection() != SPINDLE_DOWN) {
@@ -564,19 +658,27 @@ void loop() {
     
     // Če še ni aktiven, začni cikel glede na S2 nastavitev
     if (!autoModeActive && !autoCycle.isRunning()) {
-      S2Cycles cycles = inputs.getS2Cycles();
-      
-      if (cycles == CYCLES_CONTINUOUS) {
-        autoCycle.startContinuous();
-        autoModeActive = true;
-      } 
-      else if (cycles >= CYCLES_2 && cycles <= CYCLES_7) {
-        autoCycle.start(cycles);
-        autoModeActive = true;
-      }
-      else {
-        // S2 ni nastavljen na veljavno pozicijo
-        Serial.println("OPOZORILO: Nastavite število ciklov na S2!");
+      // Preveri če so koti nastavljeni
+      if (!anglesConfigured) {
+        Serial.println("NAPAKA: Koti niso nastavljeni - uporabite page1!");
+        display.setStatus("NAPAKA: Nastavi kote!");
+      } else {
+        S2Cycles cycles = inputs.getS2Cycles();
+        
+        if (cycles == CYCLES_CONTINUOUS) {
+          autoCycle.start(0, savedAngleStart, savedAngleStop, 
+                         calibratedMinAngle, calibratedMaxAngle, anglesCalibrated);
+          autoModeActive = true;
+        } 
+        else if (cycles >= CYCLES_2 && cycles <= CYCLES_7) {
+          autoCycle.start(cycles, savedAngleStart, savedAngleStop,
+                         calibratedMinAngle, calibratedMaxAngle, anglesCalibrated);
+          autoModeActive = true;
+        }
+        else {
+          // S2 ni nastavljen na veljavno pozicijo
+          Serial.println("OPOZORILO: Nastavite število ciklov na S2!");
+        }
       }
     }
   }
@@ -718,6 +820,10 @@ void loadAnglesFromPreferences() {
   savedAngleStart = preferences.getFloat("angleStart", 0.0);
   savedAngleStop = preferences.getFloat("angleStop", 0.0);
   
+  // Naloži kalibrirane min/max kote iz referenčnega hoda
+  calibratedMinAngle = preferences.getFloat("minAngle", 0.0);
+  calibratedMaxAngle = preferences.getFloat("maxAngle", 0.0);
+  
   preferences.end();
   
   // Preveri ali sta kota nastavljena
@@ -736,6 +842,21 @@ void loadAnglesFromPreferences() {
   } else {
     anglesConfigured = false;
     Serial.println("Koti niso nastavljeni - uporabite bSave za nastavitev");
+  }
+  
+  // Preveri ali je kalibracija opravljena
+  if (calibratedMinAngle > 0.0 && calibratedMaxAngle > 0.0 && calibratedMaxAngle > calibratedMinAngle) {
+    anglesCalibrated = true;
+    Serial.println("Kalibrirani limiti naloženi iz NVS:");
+    Serial.print("  Min: ");
+    Serial.print(calibratedMinAngle, 1);
+    Serial.println("°");
+    Serial.print("  Max: ");
+    Serial.print(calibratedMaxAngle, 1);
+    Serial.println("°");
+  } else {
+    anglesCalibrated = false;
+    Serial.println("OPOZORILO: Kalibracija ni opravljena - uporabite Ref na page3");
   }
 }
 

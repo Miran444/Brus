@@ -13,6 +13,45 @@ AutoCycle::AutoCycle(BrusInputs* inp, BrusOutputs* out) {
     tiltReached = false;
 }
 
+void AutoCycle::start(uint8_t cycles, float angleStart, float angleStop,
+                     float calibratedMin, float calibratedMax, bool isCalibrated) {
+    // Validacija: preveri ali so koti znotraj kalibriranih limitov
+    if (isCalibrated && angleStart > 0.0 && angleStop > 0.0) {
+        if (angleStart > calibratedMax) {
+            Serial.print("ERROR: Start angle ");
+            Serial.print(angleStart);
+            Serial.print(" presega maksimalni limit ");
+            Serial.println(calibratedMax);
+            enterState(CYCLE_ERROR);
+            errorMessage = "Start>Max";
+            return;
+        }
+        if (angleStop < calibratedMin) {
+            Serial.print("ERROR: Stop angle ");
+            Serial.print(angleStop);
+            Serial.print(" presega minimalni limit ");
+            Serial.println(calibratedMin);
+            enterState(CYCLE_ERROR);
+            errorMessage = "Stop<Min";
+            return;
+        }
+        Serial.println("[AutoCycle] Koti preverjeni - znotraj limitov");
+    } else if (!isCalibrated) {
+        Serial.println("[AutoCycle] OPOZORILO: Start brez kalibracije!");
+    }
+    
+    targetCycles = cycles;
+    completedCycles = 0;
+    continuousMode = (cycles == 0);
+    errorOccurred = false;
+    tiltReached = false;
+    
+    Serial.print("[AutoCycle] START - cikli: ");
+    Serial.println(cycles == 0 ? "∞" : String(cycles));
+    
+    enterState(CYCLE_STARTING);
+}
+
 void AutoCycle::begin() {
     reset();
     Serial.println("AutoCycle inicializiran");
@@ -205,38 +244,8 @@ void AutoCycle::processStateError() {
 }
 
 // ===== KONTROLA =====
-void AutoCycle::start(uint8_t cycles) {
-    if (state != CYCLE_IDLE) {
-        Serial.println("Cikel že teče!");
-        return;
-    }
-    
-    targetCycles = cycles;
-    completedCycles = 0;
-    continuousMode = false;
-    errorOccurred = false;
-    
-    Serial.print("Začenjam avtomatski cikel - ciklov: ");
-    Serial.println(cycles);
-    
-    enterState(CYCLE_STARTING);
-}
-
-void AutoCycle::startContinuous() {
-    if (state != CYCLE_IDLE) {
-        Serial.println("Cikel že teče!");
-        return;
-    }
-    
-    targetCycles = 0;
-    completedCycles = 0;
-    continuousMode = true;
-    errorOccurred = false;
-    
-    Serial.println("Začenjam NEPREKINJENI avtomatski cikel");
-    
-    enterState(CYCLE_STARTING);
-}
+// Stara verzija start(uint8_t) je odstranjena - nova verzija je na začetku datoteke (linija 16)
+// startContinuous() je odstranjen - uporabi start(0, ...) za neprekinjeni cikel
 
 void AutoCycle::stop() {
     Serial.println("Ustavitev avtomatskega cikla");

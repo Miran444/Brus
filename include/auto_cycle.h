@@ -46,8 +46,8 @@ public:
     void update();
     
     // Kontrola cikla
-    void start(uint8_t cycles);     // Začni cikel z določenim številom
-    void startContinuous();         // Začni neprekinjeni cikel
+    void start(uint8_t cycles, float angleStart = 0.0, float angleStop = 0.0,
+               float calibratedMin = 0.0, float calibratedMax = 0.0, bool isCalibrated = false);
     void stop();                    // Ustavi cikel
     void reset();                   // Reset state machine
     

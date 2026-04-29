@@ -101,16 +101,18 @@ enum SpindleDirection {
 // ===== AVTOMATSKI CIKEL - STANJA =====
 enum CycleState {
     CYCLE_IDLE = 0,         // Neaktivno
+    CYCLE_CHECK_KNIFE,      // Preveri ali je nož montiran
+    CYCLE_MOVE_TO_START,    // Pomik v začetni kot
     CYCLE_STARTING,         // Začetek cikla - vklop izhodov
-    CYCLE_DOWN,             // Vreteno se spušča do < 10°
-    CYCLE_UP,               // Vreteno se dviga nazaj
+    CYCLE_DOWN,             // Vreteno se spušča do stop kota
+    CYCLE_UP,               // Vreteno se dviga nazaj do start kota
     CYCLE_COMPLETE,         // Cikel končan
     CYCLE_ERROR             // Napaka
 };
 
 // ===== AVTOMATSKI CIKEL - PARAMETRI =====
-#define AUTO_SPINDLE_SPEED      180     // Hitrost vretena v avtomatskem načinu
-#define STARTUP_DELAY_MS        1000    // Zakasnitev ob začetku cikla (motor kamna, črpalka)
-#define TILT_DEBOUNCE_MS        100     // Debounce za stikalo naklona
+#define AUTO_SPINDLE_SPEED      180     // Hitrost vretena v avtomatskem načinu (DEPRECATED - use speedZacetni/Sredina/Koncni)
+#define STARTUP_DELAY_MS        2000    // Zakasnitev za vklop motorja kamna (2 sekunde)
+#define KNIFE_MOUNT_TOLERANCE   1.0     // Toleranca za preverjanje montaže noža (stopinje)
 
 #endif // CONFIG_H

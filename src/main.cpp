@@ -10,8 +10,9 @@
 // Globalni objekti
 BrusInputs inputs;
 BrusOutputs outputs;
-AutoCycle autoCycle(&inputs, &outputs);
+AS5600 angleSensor;
 NextionDisplay display;
+AutoCycle autoCycle(&inputs, &outputs, &angleSensor, &display);
 Preferences preferences;
 
 // Časovniki
@@ -28,9 +29,6 @@ bool pnevActive = false;     // bPnev - ventil noža
 bool bGorPressed = false;    // bGor - vreteno gor (pritisnjeno)
 bool bDolPressed = false;    // bDol - vreteno dol (pritisnjeno)
 
-// AS5600 senzor kota
-AS5600 angleSensor;
-
 // Shranjeni koti (v stopinjah)
 float savedAngleStart = 0.0;
 float savedAngleStop = 0.0;
@@ -46,6 +44,9 @@ uint8_t speedZacetni = 90;  // Faza 1: Start do Start-2.0°
 uint8_t speedSredina = 75;  // Faza 2: Start-2.0° do Stop+2.0°
 uint8_t speedKoncni = 85;   // Faza 3: Stop+2.0° do Stop
 uint8_t speedRocno = 80;    // Hitrost ročnega pomika
+
+// Referenčne vrednosti
+float revPerAngle = 0.0;    // Število obratov na stopinjo (iz kalibracije)
 
 // Page1 - Nastavitev kotov
 uint8_t currentPage = 0;  // Trenutna stran (0=page0, 1=page1, 3=page3, 4=page4)
@@ -89,6 +90,7 @@ void updateReferenceRun();
 void finishReferenceRun();
 void updatePage1AngleDisplay();
 void updateBNastaviKoteText();
+void updateAutoModeReadiness();
 
 void setup() {
   // Inicializacija Serial komunikacije
@@ -248,20 +250,56 @@ void handleTouchPress(uint8_t componentId) {
         Serial.println(pnevActive ? "ON" : "OFF");
         break;
         
-      case 16:  // bSettings - preklop na page1
-        Serial.println("[bSettings] Preklop na Page 1 - Nastavitve");
-        display.showPage(1);
-        currentPage = 1;
-        
-        // Inicializiraj začasne kote iz shranjenih
-        tempAngleStart = savedAngleStart;
-        tempAngleStop = savedAngleStop;
-        anglesChanged = false;
-        angleSettingMode = ANGLE_IDLE;
-        
-        // Posodobi prikaz na page1
-        updatePage1AngleDisplay();
-        display.setText("tStatus_pg1", "Vnesi kote ali uporabi Nastavi gumb");
+      case 16:  // bSettings
+        if (mode == MODE_MANUAL) {
+          // V MANUAL načinu: preklop na page1
+          Serial.println("[bSettings] Preklop na Page 1 - Nastavitve");
+          display.showPage(1);
+          currentPage = 1;
+          
+          // Inicializiraj začasne kote iz shranjenih
+          tempAngleStart = savedAngleStart;
+          tempAngleStop = savedAngleStop;
+          anglesChanged = false;
+          angleSettingMode = ANGLE_IDLE;
+          
+          // Posodobi prikaz na page1
+          updatePage1AngleDisplay();
+          display.setText("tStatus_pg1", "Vnesi kote ali uporabi Nastavi gumb");
+        }
+        else if (mode == MODE_AUTO) {
+          // V AUTO načinu: START avtomatskega cikla
+          // Preveri pogoje
+          if (!anglesCalibrated) {
+            Serial.println("[bSettings/AUTO] NAPAKA: Ni kalibracije!");
+            display.setStatus("NAPAKA: Ni kalibracije!");
+            return;
+          }
+          if (!anglesConfigured) {
+            Serial.println("[bSettings/AUTO] NAPAKA: Ni nastavljenih kotov!");
+            display.setStatus("NAPAKA: Ni kotov!");
+            return;
+          }
+          
+          S2Cycles cycles = inputs.getS2Cycles();
+          if (cycles == CYCLES_NONE) {
+            Serial.println("[bSettings/AUTO] NAPAKA: S2 ni nastavljen!");
+            display.setStatus("NAPAKA: Nastavi S2!");
+            return;
+          }
+          
+          // Vse OK - začni avtomatski cikel
+          Serial.println("========================================");
+          Serial.println("[bSettings/AUTO] START AVTOMATSKEGA CIKLA");
+          Serial.println("========================================");
+          
+          autoCycle.start(cycles, savedAngleStart, savedAngleStop,
+                         calibratedMinAngle, calibratedMaxAngle, anglesCalibrated,
+                         speedZacetni, speedSredina, speedKoncni, revPerAngle);
+          autoModeActive = true;
+          
+          display.setStatus("AUTO cikel zagnan!");
+        }
         break;
         
       default:
@@ -611,6 +649,32 @@ void loop() {
   // Posodobi prikaz kota na Nextion zaslonu
   display.setAngle(angleSensor.getCalibratedAngle());
   
+  // Posodobi podatke na page0 vsake 0.5s
+  static unsigned long lastPage0Update = 0;
+  if (currentPage == 0 && (currentMillis - lastPage0Update >= 500)) {
+    lastPage0Update = currentMillis;
+    
+    // Posodobi status vretena
+    display.setSpindleStatus(
+      outputs.isSpindleMoving(),
+      outputs.getSpindleDirection() == SPINDLE_UP,
+      outputs.getSpindleSpeed()
+    );
+    
+    // Posodobi število ciklov
+    S1Mode mode = inputs.getS1Mode();
+    if (mode == MODE_AUTO && autoCycle.isRunning()) {
+      display.setCycles(autoCycle.getCompletedCycles(), autoCycle.getTargetCycles());
+    } else {
+      S2Cycles cycles = inputs.getS2Cycles();
+      if (cycles == CYCLES_CONTINUOUS) {
+        display.setCycles(0, 99);  // 99 = continuous
+      } else {
+        display.setCycles(0, cycles);
+      }
+    }
+  }
+  
   // Če smo na page1 in nastavljamo kote, posodabljaj prikaz v realnem času
   if (currentPage == 1 && angleSettingMode != ANGLE_IDLE) {
     if (angleSettingMode == ANGLE_SET_START) {
@@ -656,6 +720,18 @@ void loop() {
     if (lastMode == MODE_AUTO && mode != MODE_AUTO) {
       autoCycle.stop();
       autoModeActive = false;
+    }
+    
+    // Ob preklopu v AUTO način
+    if (mode == MODE_AUTO && lastMode != MODE_AUTO) {
+      // Če nismo na page0, pojdi na page0
+      if (currentPage != 0) {
+        Serial.println("[MODE_AUTO] Preklop na page0");
+        display.showPage(0);
+        currentPage = 0;
+      }
+      // Posodobi bSettings gumb glede na pripravljenost
+      updateAutoModeReadiness();
     }
     
     lastMode = mode;
@@ -759,6 +835,13 @@ void loop() {
   
   // ===== AVTOMATSKI NAČIN =====
   else if (mode == MODE_AUTO) {
+    // Periodično posodobi pripravljenost gumba bSettings na page0
+    static unsigned long lastAutoCheck = 0;
+    if (currentPage == 0 && (currentMillis - lastAutoCheck > 1000)) {
+      updateAutoModeReadiness();
+      lastAutoCheck = currentMillis;
+    }
+    
     // Posodobi avtomatski cikel
     autoCycle.update();
     
@@ -773,12 +856,14 @@ void loop() {
         
         if (cycles == CYCLES_CONTINUOUS) {
           autoCycle.start(0, savedAngleStart, savedAngleStop, 
-                         calibratedMinAngle, calibratedMaxAngle, anglesCalibrated);
+                         calibratedMinAngle, calibratedMaxAngle, anglesCalibrated,
+                         speedZacetni, speedSredina, speedKoncni, revPerAngle);
           autoModeActive = true;
         } 
         else if (cycles >= CYCLES_2 && cycles <= CYCLES_7) {
           autoCycle.start(cycles, savedAngleStart, savedAngleStop,
-                         calibratedMinAngle, calibratedMaxAngle, anglesCalibrated);
+                         calibratedMinAngle, calibratedMaxAngle, anglesCalibrated,
+                         speedZacetni, speedSredina, speedKoncni, revPerAngle);
           autoModeActive = true;
         }
         else {
@@ -971,6 +1056,10 @@ void loadAnglesFromPreferences() {
   speedKoncni = preferences.getUChar("speedKoncni", 85);
   speedRocno = preferences.getUChar("speedRocno", 80);
   
+  // Naloži referenčne obrate na stopinjo
+  uint32_t revPerAngleScaled = preferences.getUInt("revPerAngle", 0);
+  revPerAngle = (float)revPerAngleScaled / 10.0;  // Shranjeno kot × 10
+  
   Serial.println("Hitrosti naložene iz NVS:");
   Serial.print("  Začetni: ");
   Serial.print(speedZacetni);
@@ -984,6 +1073,14 @@ void loadAnglesFromPreferences() {
   Serial.print("  Ročno: ");
   Serial.print(speedRocno);
   Serial.println("%");
+  
+  if (revPerAngle > 0.0) {
+    Serial.print("  RevPerAngle: ");
+    Serial.print(revPerAngle, 1);
+    Serial.println(" obr/°");
+  } else {
+    Serial.println("  OPOZORILO: RevPerAngle ni nastavljen - uporabite Ref");
+  }
 }
 
 void saveAnglesToPreferences() {
@@ -1064,6 +1161,55 @@ void updateBNastaviKoteText() {
     display.setText("bNastaviKote", "Zacetni");
   } else if (angleSettingMode == ANGLE_SET_STOP) {
     display.setText("bNastaviKote", "Koncni");
+  }
+}
+
+void updateAutoModeReadiness() {
+  // Preveri ali so vsi pogoji za avtomatski cikel izpolnjeni
+  // in posodobi gumb bSettings na page0
+  
+  bool ready = true;
+  String status = "";
+  
+  // Preveri kalibracijo (referenčni hod)
+  if (!anglesCalibrated) {
+    ready = false;
+    status = "Ni kalibracije!";
+  }
+  // Preveri nastavljene kote
+  else if (!anglesConfigured) {
+    ready = false;
+    status = "Ni kotov!";
+  }
+  // Preveri število ciklov
+  else {
+    S2Cycles cycles = inputs.getS2Cycles();
+    if (cycles == CYCLES_NONE) {
+      ready = false;
+      status = "Nastavi S2!";
+    }
+  }
+  
+  // Posodobi gumb bSettings (id=16)
+  if (ready) {
+    // Vse OK - omogoči START
+    display.setText("bSettings", "START AUTO");
+    // Nastavi barve gumba z uporabo serial objekta
+    Serial2.print("bSettings.bco=2016");    // Zelena
+    Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    Serial2.print("bSettings.pco=0");       // Črna
+    Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    display.setButtonState("bSettings", true);    // Omogoči
+    display.setStatus("Pripravljen za AUTO");
+  } else {
+    // Pogoji niso izpolnjeni
+    display.setText("bSettings", "Nastavitve");
+    Serial2.print("bSettings.bco=50712");   // Siva
+    Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    Serial2.print("bSettings.pco=65535");   // Bela
+    Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    display.setButtonState("bSettings", true);    // Vedno omogočen (za dostop do nastavitev)
+    display.setStatus(status.c_str());
   }
 }
 

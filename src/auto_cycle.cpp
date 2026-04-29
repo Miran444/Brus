@@ -1,8 +1,11 @@
 #include "auto_cycle.h"
+#include "nextion.h"
 
-AutoCycle::AutoCycle(BrusInputs* inp, BrusOutputs* out) {
+AutoCycle::AutoCycle(BrusInputs* inp, BrusOutputs* out, AS5600* sensor, NextionDisplay* disp) {
     inputs = inp;
     outputs = out;
+    angleSensor = sensor;
+    display = disp;
     state = CYCLE_IDLE;
     targetCycles = 0;
     completedCycles = 0;
@@ -11,10 +14,21 @@ AutoCycle::AutoCycle(BrusInputs* inp, BrusOutputs* out) {
     startRevolutions = 0;
     errorOccurred = false;
     tiltReached = false;
+    angleStart = 0.0;
+    angleStop = 0.0;
+    calibratedMin = 0.0;
+    calibratedMax = 0.0;
+    speedZacetni = 90;
+    speedSredina = 75;
+    speedKoncni = 85;
+    revPerAngle = 0.0;
+    lastCheckedAngle = 0.0;
+    lastCheckedRevs = 0;
 }
 
 void AutoCycle::start(uint8_t cycles, float angleStart, float angleStop,
-                     float calibratedMin, float calibratedMax, bool isCalibrated) {
+                     float calibratedMin, float calibratedMax, bool isCalibrated,
+                     uint8_t speedZ, uint8_t speedS, uint8_t speedK, float revPerAngle) {
     // Validacija: preveri ali so koti znotraj kalibriranih limitov
     if (isCalibrated && angleStart > 0.0 && angleStop > 0.0) {
         if (angleStart > calibratedMax) {
@@ -40,6 +54,15 @@ void AutoCycle::start(uint8_t cycles, float angleStart, float angleStop,
         Serial.println("[AutoCycle] OPOZORILO: Start brez kalibracije!");
     }
     
+    // Shrani parametre
+    this->angleStart = angleStart;
+    this->angleStop = angleStop;
+    this->calibratedMin = calibratedMin;
+    this->calibratedMax = calibratedMax;
+    this->speedZacetni = speedZ;
+    this->speedSredina = speedS;
+    this->speedKoncni = speedK;
+    this->revPerAngle = revPerAngle;
     targetCycles = cycles;
     completedCycles = 0;
     continuousMode = (cycles == 0);
@@ -48,8 +71,28 @@ void AutoCycle::start(uint8_t cycles, float angleStart, float angleStop,
     
     Serial.print("[AutoCycle] START - cikli: ");
     Serial.println(cycles == 0 ? "∞" : String(cycles));
+    Serial.print("Angle range: ");
+    Serial.print(angleStart);
+    Serial.print("° -> ");
+    Serial.print(angleStop);
+    Serial.println("°");
+    Serial.print("Speeds: Z=");
+    Serial.print(speedZ);
+    Serial.print("%, S=");
+    Serial.print(speedS);
+    Serial.print("%, K=");
+    Serial.print(speedK);
+    Serial.println("%");
     
-    enterState(CYCLE_STARTING);
+    display->setStatus("Preverjam montažo noža...");
+    enterState(CYCLE_CHECK_KNIFE);
+}
+
+// Helper funkcija za pretvorbo hitrosti iz % v PWM
+uint8_t AutoCycle::speedToPWM(uint8_t percent) {
+    if (percent < 50) percent = 50;
+    if (percent > 100) percent = 100;
+    return 128 + ((percent - 50) * 127) / 50;
 }
 
 void AutoCycle::begin() {
@@ -63,12 +106,14 @@ void AutoCycle::enterState(CycleState newState) {
     
     Serial.print(">>> STATE: ");
     switch(state) {
-        case CYCLE_IDLE:        Serial.println("IDLE"); break;
-        case CYCLE_STARTING:    Serial.println("STARTING"); break;
-        case CYCLE_DOWN:        Serial.println("DOWN - spuščanje vretena"); break;
-        case CYCLE_UP:          Serial.println("UP - dvig vretena"); break;
-        case CYCLE_COMPLETE:    Serial.println("COMPLETE"); break;
-        case CYCLE_ERROR:       Serial.println("ERROR"); break;
+        case CYCLE_IDLE:            Serial.println("IDLE"); break;
+        case CYCLE_CHECK_KNIFE:     Serial.println("CHECK_KNIFE - preveri montažo noža"); break;
+        case CYCLE_MOVE_TO_START:   Serial.println("MOVE_TO_START - pomik v začetni kot"); break;
+        case CYCLE_STARTING:        Serial.println("STARTING - vklop izhodov"); break;
+        case CYCLE_DOWN:            Serial.println("DOWN - spuščanje vretena"); break;
+        case CYCLE_UP:              Serial.println("UP - dvig vretena"); break;
+        case CYCLE_COMPLETE:        Serial.println("COMPLETE"); break;
+        case CYCLE_ERROR:           Serial.println("ERROR"); break;
     }
 }
 
@@ -77,6 +122,12 @@ void AutoCycle::update() {
     switch(state) {
         case CYCLE_IDLE:
             processStateIdle();
+            break;
+        case CYCLE_CHECK_KNIFE:
+            processStateCheckKnife();
+            break;
+        case CYCLE_MOVE_TO_START:
+            processStateMoveToStart();
             break;
         case CYCLE_STARTING:
             processStateStarting();
@@ -102,91 +153,327 @@ void AutoCycle::processStateIdle() {
     // (začne se preko start() funkcije)
 }
 
+// ===== STATE: CHECK_KNIFE =====
+void AutoCycle::processStateCheckKnife() {
+    // Preveri ali je nož montiran in naslonjen na brusni kamen
+    float currentAngle = angleSensor->getCalibratedAngle();
+    
+    Serial.print("[CHECK_KNIFE] Trenutni kot: ");
+    Serial.print(currentAngle);
+    Serial.println("°");
+    
+    // Preveri ali je kot med minAngle in maxAngle
+    if (currentAngle < calibratedMin || currentAngle > calibratedMax) {
+        Serial.println("[CHECK_KNIFE] NAPAKA: Nož ni montiran ali ni naslonjen na brusni kamen!");
+        Serial.print("Trenutni kot ");
+        Serial.print(currentAngle);
+        Serial.print("° je izven območja [");
+        Serial.print(calibratedMin);
+        Serial.print("° - ");
+        Serial.print(calibratedMax);
+        Serial.println("°]");
+        
+        errorMessage = "Noz ni montiran!";
+        display->setStatus("NAPAKA: Montiraj nož!");
+        enterState(CYCLE_ERROR);
+        return;
+    }
+    
+    Serial.println("[CHECK_KNIFE] OK - Nož je montiran");
+    
+    // Če je kot že blizu startAngle, pojdi direktno na STARTING
+    if (abs(currentAngle - angleStart) < KNIFE_MOUNT_TOLERANCE) {
+        Serial.println("[CHECK_KNIFE] Že v začetnem položaju");
+        display->setStatus("Pripravljam motorje...");
+        enterState(CYCLE_STARTING);
+    } else {
+        // Pomik v začetni kot
+        display->setStatus("Pozicioniram vreteno...");
+        enterState(CYCLE_MOVE_TO_START);
+    }
+}
+
+// ===== STATE: MOVE_TO_START =====
+void AutoCycle::processStateMoveToStart() {
+    float currentAngle = angleSensor->getCalibratedAngle();
+    
+    // Prvi entry - začni premik
+    if (millis() - stateStartTime < 50) {
+        Serial.print("[MOVE_TO_START] Pomik iz ");
+        Serial.print(currentAngle);
+        Serial.print("° v ");
+        Serial.print(angleStart);
+        Serial.println("°");
+        
+        // Določi smer
+        if (currentAngle < angleStart) {
+            outputs->moveSpindleUp(150);  // Srednja hitrost za pozicioniranje
+        } else {
+            outputs->moveSpindleDown(150);
+        }
+        return;
+    }
+    
+    // Preveri ali smo dosegli cilj
+    if (abs(currentAngle - angleStart) < KNIFE_MOUNT_TOLERANCE) {
+        outputs->stopSpindle();
+        Serial.print("[MOVE_TO_START] Dosežen začetni kot: ");
+        Serial.print(currentAngle);
+        Serial.println("°");        display->setStatus("Pripravljam motorje...");        enterState(CYCLE_STARTING);
+    }
+    
+    // Varnostni timeout (30 sekund)
+    if (millis() - stateStartTime > 30000) {
+        outputs->stopSpindle();
+        errorMessage = "Timeout: premik v start";
+        enterState(CYCLE_ERROR);
+    }
+}
+
 // ===== STATE: STARTING =====
 void AutoCycle::processStateStarting() {
-    // Vklop izhodov: motor kamna, črpalka, ventil
-    outputs->setGrindingMotor(true);
-    outputs->setWaterPump(true);
-    outputs->setKnifePusher(true);
+    // Prvi entry - vklopi ventil noža
+    if (millis() - stateStartTime < 50) {
+        Serial.println("[STARTING] Vklop OUT_VENTIL_NOZ");
+        outputs->setKnifePusher(true);
+        return;
+    }
     
-    // Počakaj nekaj časa da se motor kamna zažene
-    if (millis() - stateStartTime > STARTUP_DELAY_MS) {
+    // Po 2 sekundah vklopi motor kamna
+    if (millis() - stateStartTime >= STARTUP_DELAY_MS) {
+        Serial.println("[STARTING] Vklop OUT_MOTOR_KAMEN");
+        outputs->setGrindingMotor(true);
+        
         // Začni s spustom vretena
+        Serial.println("[STARTING] Začetek pomika vretena DOL");
+        char msg[50];
+        sprintf(msg, "CIKEL %d: Brusenje...", completedCycles + 1);
+        display->setStatus(msg);
         enterState(CYCLE_DOWN);
     }
 }
 
 // ===== STATE: DOWN =====
 void AutoCycle::processStateDown() {
-    // Prvi entry v stanje - začni spust
+    float currentAngle = angleSensor->getCalibratedAngle();
+    unsigned long currentRevs = inputs->getRevolutions();
+    
+    // Prvi entry v stanje - določi fazo glede na trenutni kot
     if (millis() - stateStartTime < 50) {
-        startRevolutions = inputs->getRevolutions();
-        tiltReached = false;
-        outputs->moveSpindleDown(AUTO_SPINDLE_SPEED);
-        Serial.print("Začetek spusta - Rev start: ");
-        Serial.println(startRevolutions);
+        startRevolutions = currentRevs;
+        lastCheckedAngle = currentAngle;
+        lastCheckedRevs = currentRevs;
+        
+        Serial.print("Začetek spusta - trenutni kot: ");
+        Serial.println(currentAngle);
     }
     
-    // Preveri ali smo dosegli naklon < 10° (S44 ali S43 za varnost)
-    bool tiltNow = inputs->isSpindleTilted();
-    bool safetyBottom = inputs->isSpindleAtBottom();
-    
-    // Če je dosežen S43 (spodnji položaj), je to kritični alarm
-    if (safetyBottom && !tiltReached) {
-        Serial.println("!!! ALARM - S43 VARNOSTNO STIKALO AKTIVIRANO - S44 morda NE DELUJE!");
-        // Nadaljuj z normalno logiko, ampak zabeleži alarm
-    }
-    
-    // Debounce za zanesljivo detekcijo
-    if (tiltNow && !tiltReached) {
-        if (millis() - lastTiltCheckTime > TILT_DEBOUNCE_MS) {
-            tiltReached = true;
-            
-            // Zabeleži število obratov pri < 10°
-            unsigned long currentRev = inputs->getRevolutions();
-            targetRevolutions = currentRev - startRevolutions;
-            
-            Serial.print("!!! DOSEŽEN NAKLON < 10° | Obrati za spust: ");
-            Serial.println(targetRevolutions);
-            
-            // Ustavi vreteno in začni z dvigom
-            outputs->stopSpindle();
-            delay(100); // Kratka pavza
-            
-            enterState(CYCLE_UP);
+    // FAZA 1: Od angleStart do (angleStart - 2°)
+    // Hitro brusenje začetnega dela
+    if (currentAngle > (angleStart - 2.0)) {
+        uint8_t pwm = speedToPWM(speedZacetni);
+        outputs->moveSpindleDown(pwm);
+        
+        // Status na display - Faza 1
+        static unsigned long lastDisplayUpdate = 0;
+        if (millis() - lastDisplayUpdate > 500) {  // Posodobi vsakih 0.5s
+            char msg[50];
+            sprintf(msg, "Faza 1/3 - %.1f°", currentAngle);
+            display->setStatus(msg);
+            lastDisplayUpdate = millis();
         }
-    } else {
-        lastTiltCheckTime = millis();
+    }
+    // FAZA 2: Od (angleStart - 2°) do (angleStop + 2°)
+    // Glavno brusenje s srednjo hitrostjo
+    else if (currentAngle > (angleStop + 2.0)) {
+        uint8_t pwm = speedToPWM(speedSredina);
+        outputs->moveSpindleDown(pwm);
+        
+        // Status na display - Faza 2
+        static unsigned long lastDisplayUpdate = 0;
+        if (millis() - lastDisplayUpdate > 500) {
+            char msg[50];
+            sprintf(msg, "Faza 2/3 - %.1f°", currentAngle);
+            display->setStatus(msg);
+            lastDisplayUpdate = millis();
+        }
+    }
+    // FAZA 3: Od (angleStop + 2°) do angleStop
+    // Končno brusenje
+    else if (currentAngle > angleStop) {
+        uint8_t pwm = speedToPWM(speedKoncni);
+        outputs->moveSpindleDown(pwm);
+        
+        // Status na display - Faza 3
+        static unsigned long lastDisplayUpdate = 0;
+        if (millis() - lastDisplayUpdate > 500) {
+            char msg[50];
+            sprintf(msg, "Faza 3/3 - %.1f°", currentAngle);
+            display->setStatus(msg);
+            lastDisplayUpdate = millis();
+        }
+    }
+    // Dosežen angleStop - konec spusta
+    else {
+        outputs->stopSpindle();
+        Serial.print("Spust končan pri kotu: ");
+        Serial.println(currentAngle);
+        
+        // Izpis statistike obratov
+        unsigned long totalRevs = currentRevs - startRevolutions;
+        float angleRange = angleStart - currentAngle;
+        if (angleRange > 0.0) {
+            float actualRevPerAngle = (float)totalRevs / angleRange;
+            Serial.print("Obratov: ");
+            Serial.print(totalRevs);
+            Serial.print(" / kot: ");
+            Serial.print(angleRange, 1);
+            Serial.print("° = ");
+            Serial.print(actualRevPerAngle, 1);
+            Serial.println(" obr/°");
+        }
+        
+        display->setStatus("Vračam v start...");
+        delay(100);  // Kratka pavza
+        enterState(CYCLE_UP);
+        return;
     }
     
-    // Varnost - timeout (npr. če stikalo ne deluje)
-    if (millis() - stateStartTime > 30000) {  // 30 sekund
+    // Preverjanje obratov na stopinjo (vsako stopinjo)
+    if (revPerAngle > 0.0 && (lastCheckedAngle - currentAngle) >= 1.0) {
+        unsigned long revsSinceLastCheck = currentRevs - lastCheckedRevs;
+        float angleDiff = lastCheckedAngle - currentAngle;
+        float actualRevPerAngle = (float)revsSinceLastCheck / angleDiff;
+        
+        // Dovoljeno odstopanje ±30%
+        float minExpected = revPerAngle * 0.7;
+        float maxExpected = revPerAngle * 1.3;
+        
+        if (actualRevPerAngle < minExpected) {
+            // Počasnejši pomik - možena zamašitev
+            Serial.print("OPOZORILO: Počasen spust! ");
+            Serial.print(actualRevPerAngle, 1);
+            Serial.print(" obr/° (pričakovano: ");
+            Serial.print(revPerAngle, 1);
+            Serial.println(" obr/°)");
+            
+            char msg[50];
+            sprintf(msg, "OPOZORILO: Počasen spust!");
+            display->setStatus(msg);
+        } else if (actualRevPerAngle > maxExpected) {
+            // Prehiter pomik - moženo drsenje
+            Serial.print("OPOZORILO: Prehiter spust! ");
+            Serial.print(actualRevPerAngle, 1);
+            Serial.print(" obr/° (pričakovano: ");
+            Serial.print(revPerAngle, 1);
+            Serial.println(" obr/°)");
+        }
+        
+        // Posodobi zadnje preverjanje
+        lastCheckedAngle = currentAngle;
+        lastCheckedRevs = currentRevs;
+    }
+    
+    // Varnost - preveri minimalni kot
+    if (currentAngle < calibratedMin) {
         errorOccurred = true;
-        errorMessage = "TIMEOUT - naklon ni dosežen";
+        errorMessage = "ALARM: Presežen min. kot";
+        outputs->stopSpindle();
+        enterState(CYCLE_ERROR);
+        return;
+    }
+    
+    // Varnost - timeout (60 sekund)
+    if (millis() - stateStartTime > 60000) {
+        errorOccurred = true;
+        errorMessage = "TIMEOUT pri spustu";
+        outputs->stopSpindle();
         enterState(CYCLE_ERROR);
     }
 }
 
 // ===== STATE: UP =====
 void AutoCycle::processStateUp() {
+    float currentAngle = angleSensor->getCalibratedAngle();
+    unsigned long currentRevs = inputs->getRevolutions();
+    
     // Prvi entry - začni dvig
     if (millis() - stateStartTime < 50) {
-        startRevolutions = inputs->getRevolutions();
-        outputs->moveSpindleUp(AUTO_SPINDLE_SPEED);
-        Serial.print("Začetek dviga - ciljnih obratov: ");
-        Serial.println(targetRevolutions);
+        startRevolutions = currentRevs;
+        lastCheckedAngle = currentAngle;
+        lastCheckedRevs = currentRevs;
+        
+        Serial.print("Začetek dviga - od: ");
+        Serial.print(currentAngle);
+        Serial.print(" do: ");
+        Serial.println(angleStart);
     }
     
-    // Preveri število obratov
-    unsigned long currentRev = inputs->getRevolutions();
-    unsigned long completedRev = currentRev - startRevolutions;
-    
-    // Ali smo dosegli ciljno število obratov?
-    if (completedRev >= targetRevolutions) {
+    // FAZA 1 (Obrnjena od DOWN): Od angleStop do (angleStop + 2.0°)
+    // Končno brusenje - hitro
+    if (currentAngle < (angleStop + 2.0)) {
+        uint8_t pwm = speedToPWM(speedKoncni);
+        outputs->moveSpindleUp(pwm);
+        
+        // Status na display - Faza 1
+        static unsigned long lastDisplayUpdate = 0;
+        if (millis() - lastDisplayUpdate > 500) {
+            char msg[50];
+            sprintf(msg, "Dvig 1/3 - %.1f°", currentAngle);
+            display->setStatus(msg);
+            lastDisplayUpdate = millis();
+        }
+    }
+    // FAZA 2: Od (angleStop + 2.0°) do (angleStart - 2.0°)
+    // Glavno območje - srednja hitrost
+    else if (currentAngle < (angleStart - 2.0)) {
+        uint8_t pwm = speedToPWM(speedSredina);
+        outputs->moveSpindleUp(pwm);
+        
+        // Status na display - Faza 2
+        static unsigned long lastDisplayUpdate = 0;
+        if (millis() - lastDisplayUpdate > 500) {
+            char msg[50];
+            sprintf(msg, "Dvig 2/3 - %.1f°", currentAngle);
+            display->setStatus(msg);
+            lastDisplayUpdate = millis();
+        }
+    }
+    // FAZA 3: Od (angleStart - 2.0°) do angleStart
+    // Začetno območje - hitro
+    else if (currentAngle < angleStart) {
+        uint8_t pwm = speedToPWM(speedZacetni);
+        outputs->moveSpindleUp(pwm);
+        
+        // Status na display - Faza 3
+        static unsigned long lastDisplayUpdate = 0;
+        if (millis() - lastDisplayUpdate > 500) {
+            char msg[50];
+            sprintf(msg, "Dvig 3/3 - %.1f°", currentAngle);
+            display->setStatus(msg);
+            lastDisplayUpdate = millis();
+        }
+    }
+    // Dosežen angleStart - konec dviga
+    else if (currentAngle >= angleStart) {
         outputs->stopSpindle();
         
-        Serial.print("Dvig končan - obratov: ");
-        Serial.println(completedRev);
+        Serial.print("Dvig končan pri kotu: ");
+        Serial.println(currentAngle);
+        
+        // Izpis statistike obratov
+        unsigned long totalRevs = currentRevs - startRevolutions;
+        float angleRange = currentAngle - angleStop;
+        if (angleRange > 0.0) {
+            float actualRevPerAngle = (float)totalRevs / angleRange;
+            Serial.print("Obratov: ");
+            Serial.print(totalRevs);
+            Serial.print(" / kot: ");
+            Serial.print(angleRange, 1);
+            Serial.print("° = ");
+            Serial.print(actualRevPerAngle, 1);
+            Serial.println(" obr/°");
+        }
         
         // Povečaj števec izvedenih ciklov
         completedCycles++;
@@ -206,12 +493,58 @@ void AutoCycle::processStateUp() {
             // Vsi cikli končani
             enterState(CYCLE_COMPLETE);
         }
+        return;
     }
     
-    // Varnost - timeout
-    if (millis() - stateStartTime > 30000) {
+    // Preverjanje obratov na stopinjo (vsako stopinjo)
+    if (revPerAngle > 0.0 && (currentAngle - lastCheckedAngle) >= 1.0) {
+        unsigned long revsSinceLastCheck = currentRevs - lastCheckedRevs;
+        float angleDiff = currentAngle - lastCheckedAngle;
+        float actualRevPerAngle = (float)revsSinceLastCheck / angleDiff;
+        
+        // Dovoljeno odstopanje ±30%
+        float minExpected = revPerAngle * 0.7;
+        float maxExpected = revPerAngle * 1.3;
+        
+        if (actualRevPerAngle < minExpected) {
+            // Počasnejši pomik - možna zamašitev
+            Serial.print("OPOZORILO: Počasen dvig! ");
+            Serial.print(actualRevPerAngle, 1);
+            Serial.print(" obr/° (pričakovano: ");
+            Serial.print(revPerAngle, 1);
+            Serial.println(" obr/°)");
+            
+            char msg[50];
+            sprintf(msg, "OPOZORILO: Počasen dvig!");
+            display->setStatus(msg);
+        } else if (actualRevPerAngle > maxExpected) {
+            // Prehiter pomik - možno drsenje
+            Serial.print("OPOZORILO: Prehiter dvig! ");
+            Serial.print(actualRevPerAngle, 1);
+            Serial.print(" obr/° (pričakovano: ");
+            Serial.print(revPerAngle, 1);
+            Serial.println(" obr/°)");
+        }
+        
+        // Posodobi zadnje preverjanje
+        lastCheckedAngle = currentAngle;
+        lastCheckedRevs = currentRevs;
+    }
+    
+    // Varnost - preveri maksimalni kot
+    if (currentAngle > calibratedMax) {
         errorOccurred = true;
-        errorMessage = "TIMEOUT - dvig ni končan";
+        errorMessage = "ALARM: Presežen max. kot";
+        outputs->stopSpindle();
+        enterState(CYCLE_ERROR);
+        return;
+    }
+    
+    // Varnost - timeout (60 sekund)
+    if (millis() - stateStartTime > 60000) {
+        errorOccurred = true;
+        errorMessage = "TIMEOUT pri dvigu";
+        outputs->stopSpindle();
         enterState(CYCLE_ERROR);
     }
 }
@@ -228,6 +561,11 @@ void AutoCycle::processStateComplete() {
     Serial.print("Izvedenih ciklov: ");
     Serial.println(completedCycles);
     
+    // Status na display
+    char msg[50];
+    sprintf(msg, "KONČANO - %d ciklov", completedCycles);
+    display->setStatus(msg);
+    
     // Nazaj v IDLE
     enterState(CYCLE_IDLE);
 }
@@ -239,6 +577,9 @@ void AutoCycle::processStateError() {
     
     Serial.println("!!! NAPAKA V CIKLU !!!");
     Serial.println(errorMessage);
+    
+    // Status na display
+    display->setStatus(errorMessage.c_str());
     
     // Ostani v ERROR stanju dokler ni reset
 }

@@ -41,8 +41,14 @@ float calibratedMinAngle = 0.0;  // Minimalni kot
 float calibratedMaxAngle = 0.0;  // Maksimalni kot
 bool anglesCalibrated = false;   // Ali je bila opravljena kalibracija
 
+// Hitrosti vretena (v procentih 50-100%)
+uint8_t speedZacetni = 90;  // Faza 1: Start do Start-2.0°
+uint8_t speedSredina = 75;  // Faza 2: Start-2.0° do Stop+2.0°
+uint8_t speedKoncni = 85;   // Faza 3: Stop+2.0° do Stop
+uint8_t speedRocno = 80;    // Hitrost ročnega pomika
+
 // Page1 - Nastavitev kotov
-uint8_t currentPage = 0;  // Trenutna stran (0=page0, 1=page1)
+uint8_t currentPage = 0;  // Trenutna stran (0=page0, 1=page1, 3=page3, 4=page4)
 enum AngleSettingMode {
   ANGLE_IDLE = 0,      // Ni aktivno
   ANGLE_SET_START = 1, // Nastavljamo začetni kot
@@ -76,6 +82,8 @@ void handleTouchRelease(uint8_t componentId);
 void loadAnglesFromPreferences();
 void saveAnglesToPreferences();
 void clearAnglesFromPreferences();
+void saveSpeedsToPreferences();
+uint8_t speedToPWM(uint8_t percent);
 void startReferenceRun();
 void updateReferenceRun();
 void finishReferenceRun();
@@ -208,17 +216,21 @@ void handleTouchPress(uint8_t componentId) {
     }
     
     switch(componentId) {
-      case 17:  // bGor - začni premik gor
+      case 17: { // bGor - začni premik gor
         Serial.println("[bGor] Vreteno GOR - START");
         bGorPressed = true;
-        outputs.moveSpindleUp(SPINDLE_SPEED_MEDIUM);
+        uint8_t pwmSpeed = speedToPWM(speedRocno);
+        outputs.moveSpindleUp(pwmSpeed);
         break;
+      }
         
-      case 18:  // bDol - začni premik dol
+      case 18: { // bDol - začni premik dol
         Serial.println("[bDol] Vreteno DOL - START");
         bDolPressed = true;
-        outputs.moveSpindleDown(SPINDLE_SPEED_MEDIUM);
+        uint8_t pwmSpeed = speedToPWM(speedRocno);
+        outputs.moveSpindleDown(pwmSpeed);
         break;
+      }
         
       case 19:  // bBrus - toggle motor kamna
         brusActive = !brusActive;
@@ -372,6 +384,28 @@ void handleTouchPress(uint8_t componentId) {
         display.setText("tMaxAngle", "---");
         display.setText("tMRev", "0");
         display.setText("tRevPerAngle", "---");
+        
+      case 14:  // bSpeed - preklopi na page4
+        Serial.println("[bSpeed] Preklop na Page 4 - Nastavitev hitrosti");
+        display.showPage(4);
+        currentPage = 4;
+        
+        // Posodobi prikaz hitrosti na page4
+        display.setProgress("hZacetni", speedZacetni);
+        display.setProgress("hSredina", speedSredina);
+        display.setProgress("hKoncni", speedKoncni);
+        display.setProgress("hRocno", speedRocno);
+        
+        Serial.print("Hitrosti: Zač=");
+        Serial.print(speedZacetni);
+        Serial.print("%, Sre=");
+        Serial.print(speedSredina);
+        Serial.print("%, Kon=");
+        Serial.print(speedKoncni);
+        Serial.print("%, Roč=");
+        Serial.print(speedRocno);
+        Serial.println("%");
+        break;
         display.setText("tTime", "---");
         break;
         
@@ -462,6 +496,25 @@ void handleTouchPress(uint8_t componentId) {
         break;
     }
   }
+  // ===== PAGE 4 - NASTAVITEV HITROSTI =====
+  else if (currentPage == 4) {
+    switch(componentId) {
+      case 9:  // bPage4_Back - nazaj na page1
+        Serial.println("[bPage4_Back] Nazaj na Page 1");
+        display.showPage(1);
+        currentPage = 1;
+        
+        // Posodobi prikaz kotov
+        updatePage1AngleDisplay();
+        display.setText("tStatus_pg1", "Hitrosti shranjene");
+        break;
+        
+      default:
+        Serial.print("Neznan gumb ID na page4: ");
+        Serial.println(componentId);
+        break;
+    }
+  }
 }
 
 void handleTouchRelease(uint8_t componentId) {
@@ -470,28 +523,79 @@ void handleTouchRelease(uint8_t componentId) {
   
   S1Mode mode = inputs.getS1Mode();
   
-  // Akcije samo v MANUAL načinu in na page0
-  if (mode != MODE_MANUAL || currentPage != 0) {
-    return;
+  // ===== PAGE 0 - MANUAL BUTTONS =====
+  if (currentPage == 0 && mode == MODE_MANUAL) {
+    switch(componentId) {
+      case 17:  // bGor - ustavi premik
+        Serial.println("[bGor] Vreteno GOR - STOP");
+        bGorPressed = false;
+        outputs.stopSpindle();
+        break;
+        
+      case 18:  // bDol - ustavi premik
+        Serial.println("[bDol] Vreteno DOL - STOP");
+        bDolPressed = false;
+        outputs.stopSpindle();
+        break;
+        
+      // bBrus (19) in bPnev (20) sta toggle gumba - brez Release akcije
+      
+      default:
+        break;
+    }
   }
-  
-  switch(componentId) {
-    case 17:  // bGor - ustavi premik
-      Serial.println("[bGor] Vreteno GOR - STOP");
-      bGorPressed = false;
-      outputs.stopSpindle();
-      break;
+  // ===== PAGE 4 - SPEED SETTINGS (Progress Bars) =====
+  else if (currentPage == 4) {
+    // Progress Bar pošlje Touch Release Event + 1 byte vrednosti
+    // Format: 0x66 PageID ComponentID 0x00 0xFF 0xFF 0xFF [VALUE]
+    // Preberemo vrednost (% 50-100)
+    delay(10);  // Kratka zakasnitev da pride vrednost
+    if (Serial2.available() > 0) {
+      uint8_t value = Serial2.read();
       
-    case 18:  // bDol - ustavi premik
-      Serial.println("[bDol] Vreteno DOL - STOP");
-      bDolPressed = false;
-      outputs.stopSpindle();
-      break;
+      // Omejitev na 50-100%
+      if (value < 50) value = 50;
+      if (value > 100) value = 100;
       
-    // bBrus (19) in bPnev (20) sta toggle gumba - brez Release akcije
-    
-    default:
-      break;
+      switch(componentId) {
+        case 2:  // hZacetni
+          speedZacetni = value;
+          Serial.print("[hZacetni] Hitrost začetni: ");
+          Serial.print(speedZacetni);
+          Serial.println("%");
+          saveSpeedsToPreferences();
+          break;
+          
+        case 6:  // hSredina
+          speedSredina = value;
+          Serial.print("[hSredina] Hitrost sredina: ");
+          Serial.print(speedSredina);
+          Serial.println("%");
+          saveSpeedsToPreferences();
+          break;
+          
+        case 8:  // hKoncni
+          speedKoncni = value;
+          Serial.print("[hKoncni] Hitrost končni: ");
+          Serial.print(speedKoncni);
+          Serial.println("%");
+          saveSpeedsToPreferences();
+          break;
+          
+        case 18:  // hRocno
+          speedRocno = value;
+          Serial.print("[hRocno] Hitrost ročno: ");
+          Serial.print(speedRocno);
+          Serial.println("%");
+          saveSpeedsToPreferences();
+          break;
+          
+        default:
+          Serial.print("Neznan Progress Bar ID: ");
+          Serial.println(componentId);
+          break;
+      }
+    }
   }
 }
 
@@ -625,13 +729,15 @@ void loop() {
     if (wantMoveDown && !wantMoveUp) {
       // Premik dol (prioriteta ima DOL, če sta obe pritisnjena)
       if (!outputs.isSpindleMoving() || outputs.getSpindleDirection() != SPINDLE_DOWN) {
-        outputs.moveSpindleDown(SPINDLE_SPEED_MEDIUM);
+        uint8_t pwmSpeed = speedToPWM(speedRocno);
+        outputs.moveSpindleDown(pwmSpeed);
       }
     } 
     else if (wantMoveUp && !wantMoveDown) {
       // Premik gor
       if (!outputs.isSpindleMoving() || outputs.getSpindleDirection() != SPINDLE_UP) {
-        outputs.moveSpindleUp(SPINDLE_SPEED_MEDIUM);
+        uint8_t pwmSpeed = speedToPWM(speedRocno);
+        outputs.moveSpindleUp(pwmSpeed);
       }
     } 
     else {
@@ -858,6 +964,26 @@ void loadAnglesFromPreferences() {
     anglesCalibrated = false;
     Serial.println("OPOZORILO: Kalibracija ni opravljena - uporabite Ref na page3");
   }
+  
+  // Naloži hitrosti vretena
+  speedZacetni = preferences.getUChar("speedZacetni", 90);
+  speedSredina = preferences.getUChar("speedSredina", 75);
+  speedKoncni = preferences.getUChar("speedKoncni", 85);
+  speedRocno = preferences.getUChar("speedRocno", 80);
+  
+  Serial.println("Hitrosti naložene iz NVS:");
+  Serial.print("  Začetni: ");
+  Serial.print(speedZacetni);
+  Serial.println("%");
+  Serial.print("  Sredina: ");
+  Serial.print(speedSredina);
+  Serial.println("%");
+  Serial.print("  Končni: ");
+  Serial.print(speedKoncni);
+  Serial.println("%");
+  Serial.print("  Ročno: ");
+  Serial.print(speedRocno);
+  Serial.println("%");
 }
 
 void saveAnglesToPreferences() {
@@ -879,6 +1005,43 @@ void clearAnglesFromPreferences() {
   preferences.end();
   
   Serial.println("Vsi shranjeni podatki izbrisani iz NVS");
+}
+
+void saveSpeedsToPreferences() {
+  preferences.begin("brus", false); // Read-write mode
+  
+  preferences.putUChar("speedZacetni", speedZacetni);
+  preferences.putUChar("speedSredina", speedSredina);
+  preferences.putUChar("speedKoncni", speedKoncni);
+  preferences.putUChar("speedRocno", speedRocno);
+  
+  preferences.end();
+  
+  Serial.println("Hitrosti shranjene v NVS");
+  Serial.print("  Začetni: ");
+  Serial.print(speedZacetni);
+  Serial.println("%");
+  Serial.print("  Sredina: ");
+  Serial.print(speedSredina);
+  Serial.println("%");
+  Serial.print("  Končni: ");
+  Serial.print(speedKoncni);
+  Serial.println("%");
+  Serial.print("  Ročno: ");
+  Serial.print(speedRocno);
+  Serial.println("%");
+}
+
+// Pretvori hitrost iz procenta (50-100%) v PWM vrednost (128-255)
+uint8_t speedToPWM(uint8_t percent) {
+  if (percent < 50) percent = 50;
+  if (percent > 100) percent = 100;
+  
+  // 50% = 128 PWM, 100% = 255 PWM
+  // Linearna interpolacija: PWM = 128 + (percent - 50) * (255 - 128) / 50
+  uint8_t pwm = 128 + ((percent - 50) * 127) / 50;
+  
+  return pwm;
 }
 
 void updatePage1AngleDisplay() {

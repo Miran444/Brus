@@ -953,4 +953,125 @@ Ob zagonu ESP32 preveri:
 
 ---
 
+## PAGE 4 - NASTAVITEV HITROSTI
+
+**Namen:** Nastavitev hitrosti pomika vretena v avtomatskem in ročnem načinu
+
+### Opis avtomatskega brusenja
+
+Avtomatsko brusenje je razdeljeno na tri faze:
+1. **Začetni kot do Začetni kot - 2.0°** (npr. od 22° do 20°)
+   - Faza približevanja materialu
+   - Hitrost: `hZacetni` (privzeto 90%)
+   
+2. **Začetni kot - 2.0° do Končni kot + 2.0°** (npr. od 20° do 12°)
+   - Glavna faza brusenja
+   - Hitrost: `hSredina` (privzeto 75%)
+   - Počasnejša za večji odjem materiala
+   
+3. **Končni kot + 2.0° do Končni kot** (npr. od 12° do 10°)
+   - Faza zaključevanja
+   - Hitrost: `hKoncni` (privzeto 85%)
+
+**Opomba:** Večja kot je hitrost, manj materiala se posname (obrusi).
+
+### Komponente
+
+#### Progress Bar: hZacetni (Začetna hitrost)
+- **objname**: `hZacetni`
+- **id**: 2
+- **Position**: X=50, Y=50, W=300, H=40
+- **min val**: 50
+- **max val**: 100
+- **default val**: 90
+- **bco** (background): 33840 (siva)
+- **pco** (progress color): 2016 (zelena)
+- **Events**:
+  - Touch Release Event: ✓ (Send Component ID + 1 byte value)
+
+#### Progress Bar: hSredina (Srednja hitrost)
+- **objname**: `hSredina`
+- **id**: 6
+- **Position**: X=50, Y=120, W=300, H=40
+- **min val**: 50
+- **max val**: 100
+- **default val**: 75
+- **bco**: 33840
+- **pco**: 2016
+- **Events**:
+  - Touch Release Event: ✓
+
+#### Progress Bar: hKoncni (Končna hitrost)
+- **objname**: `hKoncni`
+- **id**: 8
+- **Position**: X=50, Y=190, W=300, H=40
+- **min val**: 50
+- **max val**: 100
+- **default val**: 85
+- **bco**: 33840
+- **pco**: 2016
+- **Events**:
+  - Touch Release Event: ✓
+
+#### Progress Bar: hRocno (Ročna hitrost)
+- **objname**: `hRocno`
+- **id**: 18
+- **Position**: X=50, Y=260, W=300, H=40
+- **min val**: 50
+- **max val**: 100
+- **default val**: 80
+- **bco**: 33840
+- **pco**: 2016
+- **Events**:
+  - Touch Release Event: ✓
+- **Namen**: Določa hitrost ročnega pomika v MODE_MANUAL
+
+#### Button: bPage4_Back (Nazaj)
+- **objname**: `bPage4_Back`
+- **id**: 9
+- **Position**: X=370, Y=250, W=100, H=60
+- **txt**: `Nazaj`
+- **font**: size 3
+- **bco**: 1024 (modra)
+- **pco**: 65535 (bela)
+- **Events**:
+  - Touch Press Event: ✓ (Send Component ID)
+
+#### Label Text objekti (opcijsko)
+Za prikaz oznak pri slajderjih:
+- Text nad `hZacetni`: "Začetna hitrost"
+- Text nad `hSredina`: "Srednja hitrost"
+- Text nad `hKoncni`: "Končna hitrost"
+- Text nad `hRocno`: "Ročna hitrost"
+
+### Navigacija
+
+**Vstop na page4:**
+- Iz **page1** → pritisni gumb **bSpeed** (id=14)
+
+**Izhod iz page4:**
+- Na **page4** → pritisni gumb **bPage4_Back** (id=9) → nazaj na **page1**
+
+### Delovanje
+
+1. Uporabnik vstopi na page4 preko gumba `bSpeed` na page1
+2. Sistem posodobi prikaz vseh 4 progress barov s trenutnimi vrednostmi iz NVS
+3. Uporabnik premika slajder (progress bar)
+4. Ob spustitvi slajderja:
+   - Progress bar pošlje Touch Release Event (0x66) + Component ID + 1 byte vrednost (%)
+   - ESP32 prebere vrednost, omeji na 50-100%
+   - Shrani v globalno spremenljivko (`speedZacetni`, `speedSredina`, `speedKoncni`, `speedRocno`)
+   - Shrani v NVS (Non-Volatile Storage)
+5. Pritisnite `bPage4_Back` za vrnitev na page1
+
+### Pomembne opombe
+
+- **Hitrosti so v procentih**: 50% = minimalna hitrost, 100% = maksimalna hitrost
+- **PWM pretvorba**: 50% → 128 PWM, 100% → 255 PWM (linearna interpolacija)
+- **Samodejno shranjevanje**: Vsaka sprememba se takoj shrani v NVS
+- **Ročna hitrost (`hRocno`)**: Uporablja se SAMO v MODE_MANUAL
+- **Avtomatske hitrosti**: Uporabljajo se v MODE_AUTO med ciklom
+
+---
+
 Srečno s kreacijo HMI! Če boste imeli težave pri kateremkoli koraku, mi sporočite.

@@ -260,23 +260,23 @@ void handleTouchPress(uint8_t componentId) {
         if (angleSettingMode == ANGLE_IDLE) {
           // Začni nastavitev začetnega kota
           angleSettingMode = ANGLE_SET_START;
-          tempAngleStart = angleSensor.getCalibratedAngle();  // Začetna vrednost
-          Serial.println("[bNastaviKote] Nastavljanje ZAČETNEGA kota - uporabite tipke Gor/Dol");
-          display.setText("bNastaviKote", "Zacetni");  // "Začetni" z UTF-8
+          tempAngleStart = angleSensor.getCalibratedAngle();  // Zacetna vrednost
+          Serial.println("[bNastaviKote] Nastavljanje ZACETNEGA kota - uporabite tipke Gor/Dol");
+          display.setText("bNastaviKote", "Zacetni");
           display.setText("tStatus_pg1", "Nastavi START kot (Gor/Dol tipke)");
-          updatePage1AngleDisplay();  // Prikaži začetno vrednost
+          updatePage1AngleDisplay();  // Prikazi zacetno vrednost
         }
         else if (angleSettingMode == ANGLE_SET_START) {
           // Shrani začetni kot in začni nastavitev končnega
           tempAngleStart = angleSensor.getCalibratedAngle();
           angleSettingMode = ANGLE_SET_STOP;
           anglesChanged = true;
-          tempAngleStop = angleSensor.getCalibratedAngle();  // Začetna vrednost za končni kot
-          Serial.print("[bNastaviKote] Začetni kot nastavljen: ");
+          tempAngleStop = angleSensor.getCalibratedAngle();  // Zacetna vrednost za koncni kot
+          Serial.print("[bNastaviKote] Zacetni kot nastavljen: ");
           Serial.print(tempAngleStart, 1);
           Serial.println("°");
-          Serial.println("[bNastaviKote] Nastavljanje KONČNEGA kota - uporabite tipke Gor/Dol");
-          display.setText("bNastaviKote", "Koncni");  // "Končni" z UTF-8
+          Serial.println("[bNastaviKote] Nastavljanje KONCNEGA kota - uporabite tipke Gor/Dol");
+          display.setText("bNastaviKote", "Koncni");
           display.setText("tStatus_pg1", "Nastavi STOP kot (Gor/Dol tipke)");
           
           // Posodobi prikaz
@@ -289,9 +289,9 @@ void handleTouchPress(uint8_t componentId) {
           // Shrani končni kot in resetiraj
           tempAngleStop = angleSensor.getCalibratedAngle();
           
-          // Validacija: Začetni kot mora biti večji od končnega
+          // Validacija: Zacetni kot mora biti vecji od koncnega
           if (tempAngleStart <= tempAngleStop) {
-            Serial.println("[bNastaviKote] NAPAKA: Začetni kot mora biti večji od končnega!");
+            Serial.println("[bNastaviKote] NAPAKA: Zacetni kot mora biti vecji od koncnega!");
             Serial.print("  Start: ");
             Serial.print(tempAngleStart, 1);
             Serial.print("°, Stop: ");
@@ -777,9 +777,9 @@ void updateBNastaviKoteText() {
   if (angleSettingMode == ANGLE_IDLE) {
     display.setText("bNastaviKote", "Nastavi");
   } else if (angleSettingMode == ANGLE_SET_START) {
-    display.setText("bNastaviKote", "Za\xC4\x8Detni");  // "Začetni"
+    display.setText("bNastaviKote", "Zacetni");
   } else if (angleSettingMode == ANGLE_SET_STOP) {
-    display.setText("bNastaviKote", "Kon\xC4\x8Dni");  // "Končni"
+    display.setText("bNastaviKote", "Koncni");
   }
 }
 
@@ -811,6 +811,7 @@ void startReferenceRun() {
   display.setText("tMRev", "0");
   display.setText("tRevPerAngle", "---");
   display.setText("tTime", "---");
+  display.setText("tStatus_pg3", "FAZA 1A: Iskanje najnizje tocke\rVreteno gre navzdol do S43...");
 }
 
 void updateReferenceRun() {
@@ -830,6 +831,7 @@ void updateReferenceRun() {
       delay(200);  // Kratka zakasnitev pred obratom smeri
       
       Serial.println("S43 aktiven - najnižja točka dosežena, obračam smer...");
+      display.setText("tStatus_pg3", "S43 AKTIVEN - najnizja tocka!\rObracam smer motorja...\rFAZA 1B: Vreteno gre gor");
       
       // Obrni smer - začni iti gor
       refState = REF_FIND_MIN_UP;
@@ -849,6 +851,10 @@ void updateReferenceRun() {
       Serial.print("S43 preklop na 0 - začetek merjenja pri ");
       Serial.print(startMeasurementAngle, 1);
       Serial.println("°");
+      
+      char statusMsg[200];
+      sprintf(statusMsg, "S43 NEAKTIVEN - zacetek merjenja!\rKot: %.1f deg\rCakam +0.5 deg za minAngle...", startMeasurementAngle);
+      display.setText("tStatus_pg3", statusMsg);
     }
     
     // Če smo začeli merjenje, preveri ali smo prešli 0.5° od začetnega kota
@@ -866,6 +872,10 @@ void updateReferenceRun() {
         // Posodobi display
         sprintf(angleStr, "%.1f", measuredMinAngle);
         display.setText("tMinAngle", angleStr);
+        
+        char statusMsg[200];
+        sprintf(statusMsg, "MIN KOT DOLOCEN: %.1f deg\r(0.5 deg nad S43 preklopom)\rFAZA 2: Iskanje MAX kota...\rVreteno gre navzgor do S46", measuredMinAngle);
+        display.setText("tStatus_pg3", statusMsg);
         
         // Resetiraj števec obratov - začnemo šteti od tu naprej
         inputs.resetRevolutions();
@@ -909,6 +919,10 @@ void updateReferenceRun() {
       // Posodobi display
       sprintf(angleStr, "%.1f", measuredMaxAngle);
       display.setText("tMaxAngle", angleStr);
+      
+      char statusMsg[200];
+      sprintf(statusMsg, "S46 AKTIVEN!\rMAX KOT DOLOCEN: %.1f deg\r(-0.5 deg toleranca)\rIzracunavam statistiko...", measuredMaxAngle);
+      display.setText("tStatus_pg3", statusMsg);
       
       // Končaj referenčni hod
       finishReferenceRun();
@@ -966,4 +980,10 @@ void finishReferenceRun() {
   preferences.end();
   
   Serial.println("Podatki shranjeni v NVS");
+  
+  // Končni status na displayu
+  char statusMsg[200];
+  sprintf(statusMsg, "REFERENCNI HOD ZAKLJUCEN!\rRazpon: %.1f deg | Obrati: %lu\rOb/deg: %.1f | Cas: %.1f s\rPodatki shranjeni v NVS", 
+          angleRange, refRevolutions, revPerAngle, elapsedTime);
+  display.setText("tStatus_pg3", statusMsg);
 }

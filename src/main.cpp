@@ -254,8 +254,8 @@ void handleTouchPress(uint8_t componentId) {
         if (mode == MODE_MANUAL) {
           // V MANUAL načinu: preklop na page1
           Serial.println("[bSettings] Preklop na Page 1 - Nastavitve");
-          display.showPage(1);
           currentPage = 1;
+          display.showPage(1);
           
           // Inicializiraj začasne kote iz shranjenih
           tempAngleStart = savedAngleStart;
@@ -318,7 +318,7 @@ void handleTouchPress(uint8_t componentId) {
           tempAngleStart = angleSensor.getCalibratedAngle();  // Zacetna vrednost
           Serial.println("[bNastaviKote] Nastavljanje ZACETNEGA kota - uporabite tipke Gor/Dol");
           display.setText("bNastaviKote", "Zacetni");
-          display.setText("tStatus_pg1", "Nastavi START kot (Gor/Dol tipke)");
+          display.setText("tStatus_pg1", "Nastavi zacetni kot (tipke Gor/Dol)");
           updatePage1AngleDisplay();  // Prikazi zacetno vrednost
         }
         else if (angleSettingMode == ANGLE_SET_START) {
@@ -332,7 +332,7 @@ void handleTouchPress(uint8_t componentId) {
           Serial.println("°");
           Serial.println("[bNastaviKote] Nastavljanje KONCNEGA kota - uporabite tipke Gor/Dol");
           display.setText("bNastaviKote", "Koncni");
-          display.setText("tStatus_pg1", "Nastavi STOP kot (Gor/Dol tipke)");
+          display.setText("tStatus_pg1", "Nastavi koncni kot (tipke Gor/Dol)");
           
           // Posodobi prikaz
           updatePage1AngleDisplay();
@@ -356,14 +356,14 @@ void handleTouchPress(uint8_t componentId) {
             // Reset nastavitve
             angleSettingMode = ANGLE_IDLE;
             display.setText("bNastaviKote", "Nastavi");
-            display.setText("tStatus_pg1", "NAPAKA: Start > Stop!");
+            display.setText("tStatus_pg1", "NAPAKA: Zacetni kot mora biti vecji od koncnega!");
             return;
           }
           
           // Preveri ali so koti znotraj kalibriranih limitov
           if (anglesCalibrated) {
             if (tempAngleStart > calibratedMaxAngle) {
-              Serial.print("[bNastaviKote] NAPAKA: Start ");
+              Serial.print("[bNastaviKote] NAPAKA: Zacetni kot ");
               Serial.print(tempAngleStart, 1);
               Serial.print("° presega max limit ");
               Serial.print(calibratedMaxAngle, 1);
@@ -372,12 +372,12 @@ void handleTouchPress(uint8_t componentId) {
               angleSettingMode = ANGLE_IDLE;
               display.setText("bNastaviKote", "Nastavi");
               char msg[50];
-              sprintf(msg, "NAPAKA: Start>%.1f!", calibratedMaxAngle);
+              sprintf(msg, "NAPAKA: Zacetni kot > %.1f!", calibratedMaxAngle);
               display.setText("tStatus_pg1", msg);
               return;
             }
             if (tempAngleStop < calibratedMinAngle) {
-              Serial.print("[bNastaviKote] NAPAKA: Stop ");
+              Serial.print("[bNastaviKote] NAPAKA: Koncni kot ");
               Serial.print(tempAngleStop, 1);
               Serial.print("° presega min limit ");
               Serial.print(calibratedMinAngle, 1);
@@ -386,7 +386,7 @@ void handleTouchPress(uint8_t componentId) {
               angleSettingMode = ANGLE_IDLE;
               display.setText("bNastaviKote", "Nastavi");
               char msg[50];
-              sprintf(msg, "NAPAKA: Stop<%.1f!", calibratedMinAngle);
+              sprintf(msg, "NAPAKA: Koncni kot < %.1f!", calibratedMinAngle);
               display.setText("tStatus_pg1", msg);
               return;
             }
@@ -401,7 +401,7 @@ void handleTouchPress(uint8_t componentId) {
           Serial.println("°");
           Serial.println("[bNastaviKote] Nastavitev končana - pritisnite bSave za shranitev");
           display.setText("bNastaviKote", "Nastavi");
-          display.setText("tStatus_pg1", "Pritisnite bSave za shranitev!");
+          display.setText("tStatus_pg1", "Pritisnite Save za shranitev!");
           
           // Posodobi prikaz
           updatePage1AngleDisplay();
@@ -410,8 +410,8 @@ void handleTouchPress(uint8_t componentId) {
         
       case 15:  // bRef - preklopi na page3
         Serial.println("[bRef] Preklop na Page 3 - Referenčni hod");
-        display.showPage(3);
         currentPage = 3;
+        display.showPage(3);
         
         // Resetiraj stanje
         refState = REF_IDLE;
@@ -422,11 +422,13 @@ void handleTouchPress(uint8_t componentId) {
         display.setText("tMaxAngle", "---");
         display.setText("tMRev", "0");
         display.setText("tRevPerAngle", "---");
+        display.setText("tTime", "---");
+        break;
         
       case 14:  // bSpeed - preklopi na page4
         Serial.println("[bSpeed] Preklop na Page 4 - Nastavitev hitrosti");
-        display.showPage(4);
         currentPage = 4;
+        display.showPage(4);
         
         // Posodobi prikaz hitrosti na page4
         display.setProgress("hZacetni", speedZacetni);
@@ -444,7 +446,20 @@ void handleTouchPress(uint8_t componentId) {
         Serial.print(speedRocno);
         Serial.println("%");
         break;
-        display.setText("tTime", "---");
+        
+      case 4:  // bPage1_Back - nazaj na page0
+        Serial.println("[bPage1_Back] Nazaj na Page 0");
+        currentPage = 0;
+        display.showPage(0);
+        
+        // Posodobi prikaz na page0
+        display.setAngle(angleSensor.getCalibratedAngle());
+        S1Mode mode = inputs.getS1Mode();
+        const char* modeStr = (mode == MODE_OFF) ? "OFF" : (mode == MODE_MANUAL) ? "MANUAL" : "AUTO";
+        display.setMode(modeStr);
+        
+        // Posodobi gumb bSettings glede na pripravljenost
+        updateAutoModeReadiness();
         break;
         
       case 7:   // bSave - shrani kote
@@ -457,31 +472,31 @@ void handleTouchPress(uint8_t componentId) {
             Serial.print("°, Stop: ");
             Serial.print(tempAngleStop, 1);
             Serial.println("°");
-            display.setText("tStatus_pg1", "NAPAKA: Start > Stop!");
+            display.setText("tStatus_pg1", "NAPAKA: Zacetni kot mora biti vecji od koncnega!");
             return;
           }
           
           // Preveri ali so koti znotraj kalibriranih limitov
           if (anglesCalibrated) {
             if (tempAngleStart > calibratedMaxAngle) {
-              Serial.print("[bSave] NAPAKA: Start ");
+              Serial.print("[bSave] NAPAKA: Zacetni kot ");
               Serial.print(tempAngleStart, 1);
               Serial.print("° presega max limit ");
               Serial.print(calibratedMaxAngle, 1);
               Serial.println("°");
               char msg[50];
-              sprintf(msg, "NAPAKA: Start>%.1f!", calibratedMaxAngle);
+              sprintf(msg, "NAPAKA: Zacetni kot > %.1f!", calibratedMaxAngle);
               display.setText("tStatus_pg1", msg);
               return;
             }
             if (tempAngleStop < calibratedMinAngle) {
-              Serial.print("[bSave] NAPAKA: Stop ");
+              Serial.print("[bSave] NAPAKA: Koncni kot ");
               Serial.print(tempAngleStop, 1);
               Serial.print("° presega min limit ");
               Serial.print(calibratedMinAngle, 1);
               Serial.println("°");
               char msg[50];
-              sprintf(msg, "NAPAKA: Stop<%.1f!", calibratedMinAngle);
+              sprintf(msg, "NAPAKA: Koncni kot < %.1f!", calibratedMinAngle);
               display.setText("tStatus_pg1", msg);
               return;
             }
@@ -521,6 +536,22 @@ void handleTouchPress(uint8_t componentId) {
   // ===== PAGE 3 - REFERENČNI HOD =====
   else if (currentPage == 3) {
     switch(componentId) {
+      case 4:  // bPage3_Back - nazaj na page1
+        Serial.println("[bPage3_Back] Nazaj na Page 1");
+        currentPage = 1;
+        display.showPage(1);
+        
+        // Ustavi referenčni hod če teče
+        if (refState != REF_IDLE) {
+          outputs.stopSpindle();
+          refState = REF_IDLE;
+        }
+        
+        // Posodobi prikaz kotov na page1
+        updatePage1AngleDisplay();
+        display.setText("tStatus_pg1", "Nazaj iz Reference");
+        break;
+        
       case 3:  // bRefStart - začni referenčni hod
         if (refState == REF_IDLE) {
           Serial.println("[bRefStart] Začetek referenčnega hoda");
@@ -539,8 +570,8 @@ void handleTouchPress(uint8_t componentId) {
     switch(componentId) {
       case 9:  // bPage4_Back - nazaj na page1
         Serial.println("[bPage4_Back] Nazaj na Page 1");
-        display.showPage(1);
         currentPage = 1;
+        display.showPage(1);
         
         // Posodobi prikaz kotov
         updatePage1AngleDisplay();

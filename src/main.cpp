@@ -172,7 +172,7 @@ void handleNextionEvents() {
             Serial.print("°, Stop: ");
             Serial.print(stop, 1);
             Serial.println("°");
-            display.setText("tStatus_pg1", "NAPAKA: Start > Stop!");
+            display.setText("tStatus_pg1", "NAPAKA: Začetni kot mora biti večji od končnega!");
             return;
           }
           
@@ -186,7 +186,7 @@ void handleNextionEvents() {
           Serial.print("°, Stop=");
           Serial.print(tempAngleStop, 1);
           Serial.println("°");
-          display.setText("tStatus_pg1", "Koti OK - pritisnite bSave!");
+          display.setText("tStatus_pg1", "Koti OK - pritisnite Save!");
           
           // Posodobi prikaz
           updatePage1AngleDisplay();
@@ -266,6 +266,9 @@ void handleTouchPress(uint8_t componentId) {
           // Posodobi prikaz na page1
           updatePage1AngleDisplay();
           display.setText("tStatus_pg1", "Vnesi kote ali uporabi Nastavi gumb");
+          
+          // Deaktiviraj bSave gumb (aktivira se ob spremembi kotov)
+          display.setButtonState("bSave", false);
         }
         else if (mode == MODE_AUTO) {
           // V AUTO načinu: START avtomatskega cikla
@@ -462,69 +465,34 @@ void handleTouchPress(uint8_t componentId) {
         updateAutoModeReadiness();
         break;
         
-      case 7:   // bSave - shrani kote
-        if (anglesChanged) {
-          // Validacija: Začetni kot mora biti večji od končnega
-          if (tempAngleStart <= tempAngleStop) {
-            Serial.println("[bSave] NAPAKA: Začetni kot mora biti večji od končnega!");
-            Serial.print("  Start: ");
-            Serial.print(tempAngleStart, 1);
-            Serial.print("°, Stop: ");
-            Serial.print(tempAngleStop, 1);
-            Serial.println("°");
-            display.setText("tStatus_pg1", "NAPAKA: Zacetni kot mora biti vecji od koncnega!");
-            return;
-          }
-          
-          // Preveri ali so koti znotraj kalibriranih limitov
-          if (anglesCalibrated) {
-            if (tempAngleStart > calibratedMaxAngle) {
-              Serial.print("[bSave] NAPAKA: Zacetni kot ");
-              Serial.print(tempAngleStart, 1);
-              Serial.print("° presega max limit ");
-              Serial.print(calibratedMaxAngle, 1);
-              Serial.println("°");
-              char msg[50];
-              sprintf(msg, "NAPAKA: Zacetni kot > %.1f!", calibratedMaxAngle);
-              display.setText("tStatus_pg1", msg);
-              return;
-            }
-            if (tempAngleStop < calibratedMinAngle) {
-              Serial.print("[bSave] NAPAKA: Koncni kot ");
-              Serial.print(tempAngleStop, 1);
-              Serial.print("° presega min limit ");
-              Serial.print(calibratedMinAngle, 1);
-              Serial.println("°");
-              char msg[50];
-              sprintf(msg, "NAPAKA: Koncni kot < %.1f!", calibratedMinAngle);
-              display.setText("tStatus_pg1", msg);
-              return;
-            }
-            Serial.println("[bSave] Koti preverjeni - znotraj limitov");
-          } else {
-            Serial.println("[bSave] OPOZORILO: Koti niso preverjeni - kalibracija ni opravljena!");
-            display.setText("tStatus_pg1", "Opozorilo: Ni kalibracije!");
-          }
-          
-          savedAngleStart = tempAngleStart;
-          savedAngleStop = tempAngleStop;
-          saveAnglesToPreferences();
-          anglesConfigured = true;
-          anglesChanged = false;
-          
-          Serial.println("[bSave] Koti shranjeni v NVS");
-          Serial.print("  Start: ");
-          Serial.print(savedAngleStart, 1);
-          Serial.println("°");
-          Serial.print("  Stop: ");
-          Serial.print(savedAngleStop, 1);
-          Serial.println("°");
-          
-          display.setText("tStatus_pg1", "Koti shranjeni!");
-          
-          // Deaktiviraj bSave gumb
-          display.setButtonState("bSave", false);
-        }
+      case 7:   // bSave - shrani kote (Nextion je že validiral)
+        // Nextion je že opravil validacijo, samo shranimo
+        savedAngleStart = tempAngleStart;
+        savedAngleStop = tempAngleStop;
+        saveAnglesToPreferences();
+        anglesConfigured = true;
+        anglesChanged = false;
+        
+        Serial.println("[bSave] Koti shranjeni v NVS");
+        Serial.print("  Start: ");
+        Serial.print(savedAngleStart, 1);
+        Serial.println("°");
+        Serial.print("  Stop: ");
+        Serial.print(savedAngleStop, 1);
+        Serial.println("°");
+        
+        // Posodobi globalne spremenljivke na page0 (format × 10)
+        display.setGlobalVariable("page0.vaAngleStart", (int32_t)(savedAngleStart * 10));
+        display.setGlobalVariable("page0.vaAngleStop", (int32_t)(savedAngleStop * 10));
+        
+        // Potrdi uspešno shranjevanje
+        display.setText("tStatus_pg1", "Koti uspesno shranjeni!");
+        
+        // Deaktiviraj bSave in omogoči bNastaviKote
+        display.setButtonState("bSave", false);
+        Serial2.print("bNastaviKote.pco=0");  // Resetiraj barvo
+        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+        display.setButtonState("bNastaviKote", true);
         break;
         
       default:
@@ -708,10 +676,20 @@ void loop() {
   
   // Če smo na page1 in nastavljamo kote, posodabljaj prikaz v realnem času
   if (currentPage == 1 && angleSettingMode != ANGLE_IDLE) {
+    float previousAngle = (angleSettingMode == ANGLE_SET_START) ? tempAngleStart : tempAngleStop;
+    
     if (angleSettingMode == ANGLE_SET_START) {
       tempAngleStart = angleSensor.getCalibratedAngle();
+      if (abs(tempAngleStart - previousAngle) > 0.1) {  // Sprememba > 0.1°
+        anglesChanged = true;
+        display.setButtonState("bSave", true);
+      }
     } else if (angleSettingMode == ANGLE_SET_STOP) {
       tempAngleStop = angleSensor.getCalibratedAngle();
+      if (abs(tempAngleStop - previousAngle) > 0.1) {  // Sprememba > 0.1°
+        anglesChanged = true;
+        display.setButtonState("bSave", true);
+      }
     }
     updatePage1AngleDisplay();
   }

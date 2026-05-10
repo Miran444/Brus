@@ -48,8 +48,10 @@ uint8_t speedRocno = 80;    // Hitrost ročnega pomika
 // Referenčne vrednosti
 float revPerAngle = 0.0;    // Število obratov na stopinjo (iz kalibracije)
 
-// Page1 - Nastavitev kotov
+// Page management
 uint8_t currentPage = 0;  // Trenutna stran (0=page0, 1=page1, 3=page3, 4=page4)
+
+// Page1 - Nastavitev kotov
 enum AngleSettingMode {
   ANGLE_IDLE = 0,      // Ni aktivno
   ANGLE_SET_START = 1, // Nastavljamo začetni kot
@@ -59,6 +61,8 @@ AngleSettingMode angleSettingMode = ANGLE_IDLE;
 float tempAngleStart = 0.0;  // Začasni koti pred shranjevanjem
 float tempAngleStop = 0.0;
 bool anglesChanged = false;  // Ali so se koti spremenili (za aktivacijo bSave)
+
+// Page2 - Trenutno je na strani 2 Numeric Keyboard
 
 // Page3 - Referenčni hod
 enum ReferenceState {
@@ -107,6 +111,9 @@ void setup() {
   
   // Inicializacija vhodov
   inputs.begin();
+  
+  // Poveži inputs z outputs za kontrolo cilindra
+  outputs.setInputs(&inputs);
   
   // Inicializacija avtomatskega cikla
   autoCycle.begin();
@@ -450,7 +457,7 @@ void handleTouchPress(uint8_t componentId) {
         Serial.println("%");
         break;
         
-      case 4:  // bPage1_Back - nazaj na page0
+      case 4: { // bPage1_Back - nazaj na page0
         Serial.println("[bPage1_Back] Nazaj na Page 0");
         currentPage = 0;
         display.showPage(0);
@@ -464,6 +471,7 @@ void handleTouchPress(uint8_t componentId) {
         // Posodobi gumb bSettings glede na pripravljenost
         updateAutoModeReadiness();
         break;
+      }
         
       case 7:   // bSave - shrani kote (Nextion je že validiral)
         // Nextion je že opravil validacijo, samo shranimo
@@ -641,6 +649,9 @@ void loop() {
   
   // Posodobi vhode
   inputs.update();
+  
+  // Posodobi izhode (kontrola cilindra)
+  outputs.update();
   
   // Posodobi AS5600 senzor
   angleSensor.update();

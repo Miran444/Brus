@@ -51,6 +51,8 @@ public:
     bool isSpindleTilted();     // Naklon < 10° (AS5600 ali S44)
     bool isSpindleAtBottom();   // Spodnji položaj ~0° (S43 - varnostno)
     bool isSpindleAtTop();      // Zgornji položaj MAX (S46 - končno stikalo)
+    bool isKnifeIn();           // Nož je v končnem položaju NOTER (IN)
+    bool isKnifeOut();          // Nož je v končnem položaju VEN (OUT)
     unsigned long getRevolutions(); // Števec obratov
     void resetRevolutions();
     

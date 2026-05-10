@@ -23,13 +23,13 @@
 #define IN_RESET            7   // Reset tipka
 
 // Drugi SN65HVS882 (IN8-IN15) - S2 preklopnik za cikle
-#define IN_S2_NEPREKINJEN   8   // S2 - Neprekinjeni cikli
-#define IN_S2_7_CIKLOV      9   // S2 - 7 ciklov
-#define IN_S2_6_CIKLOV      10  // S2 - 6 ciklov
-#define IN_S2_5_CIKLOV      11  // S2 - 5 ciklov
-#define IN_S2_4_CIKLI       12  // S2 - 4 cikli
-#define IN_S2_3_CIKLI       13  // S2 - 3 cikli
-#define IN_S2_2_CIKLA       14  // S2 - 2 cikla
+#define IN_KNIFE_OUT        8   // Senzor končnega položaja noža VEN (OUT)
+#define IN_KNIFE_IN         9   // Senzor končnega položaja noža NOTER (IN)
+#define IN_S2_NEPREKINJEN   10  // S2 - Neprekinjeni cikli
+#define IN_S2_4_CIKLE       11  // S2 - 4 cikle
+#define IN_S2_3_CIKLI       12  // S2 - 3 cikli
+#define IN_S2_2_CIKLA       13  // S2 - 2 cikla
+#define IN_S2_1_CIKEL       14  // S2 - 1 cikel
 #define IN_USER             15  // User vhod - rezerva za prihodnost
 
 // ===== ENUMERACIJE =====
@@ -41,6 +41,7 @@ enum S1Mode {
 
 enum S2Cycles {
     CYCLES_NONE = 0,
+    CYCLES_1 = 1,
     CYCLES_2 = 2,
     CYCLES_3 = 3,
     CYCLES_4 = 4,
@@ -73,8 +74,8 @@ enum S2Cycles {
 // ===== GPIO IZHODI =====
 // Releji (preko 2N7002 tranzistorjev)
 #define OUT_MOTOR_KAMEN     10  // GPIO10 - Kontaktor trifaznega motorja brusnega kamna
-#define OUT_VENTIL_NOZ      21  // GPIO21 - Pnevmatski ventil za premik noža
-#define OUT_CRPALKA         47  // GPIO47 - Črpalka vode
+#define OUT_VENTIL_NOZ_IN   21  // GPIO21 - Pnevmatski ventil 3/5 - premik noža NOTER
+#define OUT_VENTIL_NOZ_OUT  47  // GPIO47 - Pnevmatski ventil 3/5 - premik noža VEN
 
 // Motor vretena - MD13S (Cytron) krmilnik
 #define OUT_SPINDLE_DIR     11  // GPIO11 - Smer motorja vretena

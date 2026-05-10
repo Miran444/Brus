@@ -123,23 +123,19 @@ S1Mode BrusInputs::getS1Mode() {
 
 // ===== STIKALO S2 - CYCLES =====
 S2Cycles BrusInputs::getS2Cycles() {
-    // Beremo vse pozicije S2 (nova konfiguracija)
-    bool continuous = getInputDebounced(IN_S2_NEPREKINJEN);
-    bool cycles7 = getInputDebounced(IN_S2_7_CIKLOV);
-    bool cycles6 = getInputDebounced(IN_S2_6_CIKLOV);
-    bool cycles5 = getInputDebounced(IN_S2_5_CIKLOV);
-    bool cycles4 = getInputDebounced(IN_S2_4_CIKLI);
-    bool cycles3 = getInputDebounced(IN_S2_3_CIKLI);
-    bool cycles2 = getInputDebounced(IN_S2_2_CIKLA);
+    // Beremo vse pozicije S2 (nova konfiguracija po testiranju)
+    bool continuous = getInputDebounced(IN_S2_NEPREKINJEN);  // IN10
+    bool cycles4 = getInputDebounced(IN_S2_4_CIKLE);         // IN11
+    bool cycles3 = getInputDebounced(IN_S2_3_CIKLI);         // IN12
+    bool cycles2 = getInputDebounced(IN_S2_2_CIKLA);         // IN13
+    bool cycles1 = getInputDebounced(IN_S2_1_CIKEL);         // IN14
     
     // Dekodiranje - samo ena pozicija je aktivna
     if (continuous) return CYCLES_CONTINUOUS;
-    if (cycles7) return CYCLES_7;
-    if (cycles6) return CYCLES_6;
-    if (cycles5) return CYCLES_5;
     if (cycles4) return CYCLES_4;
     if (cycles3) return CYCLES_3;
     if (cycles2) return CYCLES_2;
+    if (cycles1) return CYCLES_1;
     
     return CYCLES_NONE;
 }
@@ -185,6 +181,16 @@ bool BrusInputs::isSpindleAtBottom() {
 bool BrusInputs::isSpindleAtTop() {
     // S46 - končno stikalo pri MAX kotu (IN_USER vhod)
     return getInputBit(IN_USER);
+}
+
+bool BrusInputs::isKnifeIn() {
+    // Senzor končnega položaja noža NOTER (IN)
+    return getInputBit(IN_KNIFE_IN);
+}
+
+bool BrusInputs::isKnifeOut() {
+    // Senzor končnega položaja noža VEN (OUT)
+    return getInputBit(IN_KNIFE_OUT);
 }
 
 // ===== AS5600 FUNKCIJE =====

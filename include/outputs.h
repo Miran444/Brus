@@ -8,6 +8,14 @@
 class BrusInputs;
 
 class BrusOutputs {
+public:
+    // Enumeracija za stanje cilindra noža (public za getter)
+    enum KnifeCylinderState {
+        KNIFE_STOPPED = 0,       // Cilinder miren
+        KNIFE_MOVING_IN = 1,     // Premikanje NOTER
+        KNIFE_MOVING_OUT = 2     // Premikanje VEN
+    };
+
 private:
     // Stanje izhodov
     bool grindingMotorOn;
@@ -20,11 +28,6 @@ private:
     bool spindleMoving;
     
     // Kontrola cilindra noža
-    enum KnifeCylinderState {
-        KNIFE_STOPPED = 0,       // Cilinder miren
-        KNIFE_MOVING_IN = 1,     // Premikanje NOTER
-        KNIFE_MOVING_OUT = 2     // Premikanje VEN
-    };
     KnifeCylinderState knifeCylinderState;
     unsigned long knifeMoveStartTime;
     const unsigned long KNIFE_SAFETY_TIMEOUT = 10000; // 10 sekund
@@ -56,6 +59,9 @@ public:
     bool isWaterPumpOn() { return waterPumpOn; }
     bool hasKnifeCylinderError() { return knifeCylinderError; }
     String getKnifeCylinderError() { return knifeCylinderErrorMsg; }
+    
+    // Getter za stanje cilindra
+    KnifeCylinderState getKnifeCylinderState() { return knifeCylinderState; }
     
     // ===== KONTROLA MOTORJA VRETENA (MD13S) =====
     void setSpindleSpeed(uint8_t speed); // 0-255

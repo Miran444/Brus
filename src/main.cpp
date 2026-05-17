@@ -48,10 +48,21 @@ uint8_t speedRocno = 80;    // Hitrost ročnega pomika
 // Referenčne vrednosti
 float revPerAngle = 0.0;    // Število obratov na stopinjo (iz kalibracije)
 
-// Page management
-uint8_t currentPage = 0;  // Trenutna stran (0=page0, 1=page1, 3=page3, 4=page4)
+// ===== PAGE MANAGEMENT - NOVA STRUKTURA =====
+// page0: pgIntro (startup, 5s timeout)
+// page1: pgModeOFF (osnovna stran)
+// page2: pgModeMAN (ročni način)
+// page3: pgModeAUTO (avtomatski način)
+// page4: pgSettings (nastavitve menu)
+// page5: pgRef (referenčni hod)
+// page6: pgSpeed (hitrosti)
+// page7: pgAngle (koti)
+uint8_t currentPage = 0;  // Trenutna stran
+unsigned long introStartTime = 0;
+bool introShown = false;
+S1Mode lastS1Mode = MODE_OFF;
 
-// Page1 - Nastavitev kotov
+// Page7 (pgAngle) - Nastavitev kotov
 enum AngleSettingMode {
   ANGLE_IDLE = 0,      // Ni aktivno
   ANGLE_SET_START = 1, // Nastavljamo začetni kot
@@ -62,9 +73,7 @@ float tempAngleStart = 0.0;  // Začasni koti pred shranjevanjem
 float tempAngleStop = 0.0;
 bool anglesChanged = false;  // Ali so se koti spremenili (za aktivacijo bSave)
 
-// Page2 - Trenutno je na strani 2 Numeric Keyboard
-
-// Page3 - Referenčni hod
+// Page5 (pgRef) - Referenčni hod
 enum ReferenceState {
   REF_IDLE = 0,           // Ni aktivno
   REF_FIND_MIN_DOWN = 1,  // Iščemo najnižjo točko (navzdol do S43 aktiven)
@@ -95,6 +104,7 @@ void finishReferenceRun();
 void updatePage1AngleDisplay();
 void updateBNastaviKoteText();
 void updateAutoModeReadiness();
+void handlePageChange(uint8_t newPage);  // Nova funkcija za PAGE: event
 
 void setup() {
   // Inicializacija Serial komunikacije
@@ -136,12 +146,14 @@ void setup() {
   // Naloži shranjene kote iz NVS
   loadAnglesFromPreferences();
   
-  // Nastavi začetno stran
+  // Nastavi začetno stran - pgIntro (page0)
   display.showPage(0);
   currentPage = 0;
+  introStartTime = millis();
+  introShown = true;
   
   Serial.println("Sistem pripravljen!");
-  Serial.println("ROČNI NAČIN: Za nastavitev kotov pritisnite gumb Settings na displayu");
+  Serial.println("Intro stran prikazana - preklop na pgModeOFF čez 5s...");
   Serial.println();
 }
 
@@ -166,40 +178,66 @@ void handleNextionEvents() {
       }
     }
     else if (eventType == 0x70) {
-      // String Return Event - za parsing kotov iz page1
+      // String Return Event
       String data = display.readString();
       if (data.length() > 0) {
-        float start, stop;
-        if (display.parseAngleSettings(data, start, stop)) {
-          // Validacija: Začetni kot mora biti večji od končnega
-          if (start <= stop) {
-            Serial.println("NAPAKA: Začetni kot mora biti večji od končnega!");
-            Serial.print("  Start: ");
-            Serial.print(start, 1);
-            Serial.print("°, Stop: ");
-            Serial.print(stop, 1);
+        // Preveri če je PAGE: event
+        if (data.startsWith("PAGE:")) {
+          // Format: "PAGE:X" kjer je X hex številka strani (0-7)
+          String pageHex = data.substring(5);
+          uint8_t newPage = (uint8_t)strtol(pageHex.c_str(), NULL, 16);
+          handlePageChange(newPage);
+        }
+        // Preveri če je ID14: event (hRocno slider)
+        else if (data.startsWith("ID14:")) {
+          // Format: "ID14:x" kjer je x vrednost 50-100
+          String valueStr = data.substring(5);
+          uint8_t value = valueStr.toInt();
+          
+          // Omejitev na 50-100%
+          if (value < 50) value = 50;
+          if (value > 100) value = 100;
+          
+          speedRocno = value;
+          Serial.print("[hRocno] Hitrost ročno: ");
+          Serial.print(speedRocno);
+          Serial.println("%");
+          saveSpeedsToPreferences();
+        }
+        // Parsing kotov iz page7 (pgAngle)
+        else {
+          float start, stop;
+          if (display.parseAngleSettings(data, start, stop)) {
+            // Validacija: Začetni kot mora biti večji od končnega
+            if (start <= stop) {
+              Serial.println("NAPAKA: Začetni kot mora biti večji od končnega!");
+              Serial.print("  Start: ");
+              Serial.print(start, 1);
+              Serial.print("°, Stop: ");
+              Serial.print(stop, 1);
+              Serial.println("°");
+              display.setText("tStatus_pg1", "NAPAKA: Začetni kot mora biti večji od končnega!");
+              return;
+            }
+            
+            // Koti uspešno parsirani iz xStartAngle in xEndAngle
+            tempAngleStart = start;
+            tempAngleStop = stop;
+            anglesChanged = true;
+            
+            Serial.print("Koti nastavljeni ročno: Start=");
+            Serial.print(tempAngleStart, 1);
+            Serial.print("°, Stop=");
+            Serial.print(tempAngleStop, 1);
             Serial.println("°");
-            display.setText("tStatus_pg1", "NAPAKA: Začetni kot mora biti večji od končnega!");
-            return;
+            display.setText("tStatus_pg1", "Koti OK - pritisnite Save!");
+            
+            // Posodobi prikaz
+            updatePage1AngleDisplay();
+            
+            // Aktiviraj bSave gumb
+            display.setButtonState("bSave", true);
           }
-          
-          // Koti uspešno parsirani iz xStartAngle in xEndAngle
-          tempAngleStart = start;
-          tempAngleStop = stop;
-          anglesChanged = true;
-          
-          Serial.print("Koti nastavljeni ročno: Start=");
-          Serial.print(tempAngleStart, 1);
-          Serial.print("°, Stop=");
-          Serial.print(tempAngleStop, 1);
-          Serial.println("°");
-          display.setText("tStatus_pg1", "Koti OK - pritisnite Save!");
-          
-          // Posodobi prikaz
-          updatePage1AngleDisplay();
-          
-          // Aktiviraj bSave gumb
-          display.setButtonState("bSave", true);
         }
       }
     }
@@ -214,18 +252,10 @@ void handleTouchPress(uint8_t componentId) {
   Serial.print("Touch Press: ");
   Serial.println(componentId);
   
-  S1Mode mode = inputs.getS1Mode();
-  
-  // ===== PAGE 0 - ROČNO UPRAVLJANJE =====
-  if (currentPage == 0) {
-    // Akcije samo v MANUAL načinu
-    if (mode != MODE_MANUAL) {
-      Serial.println("Gumbi delujejo samo v MANUAL načinu!");
-      return;
-    }
-    
+  // ===== PAGE 2 - pgModeMAN (ROČNI NAČIN) =====
+  if (currentPage == 2) {
     switch(componentId) {
-      case 17: { // bGor - začni premik gor
+      case 4: { // bGor - začni premik gor
         Serial.println("[bGor] Vreteno GOR - START");
         bGorPressed = true;
         uint8_t pwmSpeed = speedToPWM(speedRocno);
@@ -233,7 +263,7 @@ void handleTouchPress(uint8_t componentId) {
         break;
       }
         
-      case 18: { // bDol - začni premik dol
+      case 5: { // bDol - začni premik dol
         Serial.println("[bDol] Vreteno DOL - START");
         bDolPressed = true;
         uint8_t pwmSpeed = speedToPWM(speedRocno);
@@ -241,7 +271,7 @@ void handleTouchPress(uint8_t componentId) {
         break;
       }
         
-      case 19:  // bBrus - toggle motor kamna
+      case 6:  // bBrus - toggle motor kamna
         brusActive = !brusActive;
         outputs.setGrindingMotor(brusActive);
         display.setBrusState(brusActive);
@@ -249,7 +279,7 @@ void handleTouchPress(uint8_t componentId) {
         Serial.println(brusActive ? "ON" : "OFF");
         break;
         
-      case 20:  // bPnev - toggle ventil noža
+      case 7:  // bPnev - toggle ventil noža
         pnevActive = !pnevActive;
         outputs.setKnifePusher(pnevActive);
         display.setPnevState(pnevActive);
@@ -257,63 +287,59 @@ void handleTouchPress(uint8_t componentId) {
         Serial.println(pnevActive ? "ON" : "OFF");
         break;
         
-      case 16:  // bSettings
-        if (mode == MODE_MANUAL) {
-          // V MANUAL načinu: preklop na page1
-          Serial.println("[bSettings] Preklop na Page 1 - Nastavitve");
-          currentPage = 1;
-          display.showPage(1);
-          
-          // Inicializiraj začasne kote iz shranjenih
-          tempAngleStart = savedAngleStart;
-          tempAngleStop = savedAngleStop;
-          anglesChanged = false;
-          angleSettingMode = ANGLE_IDLE;
-          
-          // Posodobi prikaz na page1
-          updatePage1AngleDisplay();
-          display.setText("tStatus_pg1", "Vnesi kote ali uporabi Nastavi gumb");
-          
-          // Deaktiviraj bSave gumb (aktivira se ob spremembi kotov)
-          display.setButtonState("bSave", false);
-        }
-        else if (mode == MODE_AUTO) {
-          // V AUTO načinu: START avtomatskega cikla
-          // Preveri pogoje
-          if (!anglesCalibrated) {
-            Serial.println("[bSettings/AUTO] NAPAKA: Ni kalibracije!");
-            display.setStatus("NAPAKA: Ni kalibracije!");
-            return;
-          }
-          if (!anglesConfigured) {
-            Serial.println("[bSettings/AUTO] NAPAKA: Ni nastavljenih kotov!");
-            display.setStatus("NAPAKA: Ni kotov!");
-            return;
-          }
-          
-          S2Cycles cycles = inputs.getS2Cycles();
-          if (cycles == CYCLES_NONE) {
-            Serial.println("[bSettings/AUTO] NAPAKA: S2 ni nastavljen!");
-            display.setStatus("NAPAKA: Nastavi S2!");
-            return;
-          }
-          
-          // Vse OK - začni avtomatski cikel
-          Serial.println("========================================");
-          Serial.println("[bSettings/AUTO] START AVTOMATSKEGA CIKLA");
-          Serial.println("========================================");
-          
-          autoCycle.start(cycles, savedAngleStart, savedAngleStop,
-                         calibratedMinAngle, calibratedMaxAngle, anglesCalibrated,
-                         speedZacetni, speedSredina, speedKoncni, revPerAngle);
-          autoModeActive = true;
-          
-          display.setStatus("AUTO cikel zagnan!");
-        }
+      default:
+        Serial.print("Neznan gumb ID na page2: ");
+        Serial.println(componentId);
         break;
+    }
+  }
+  // ===== PAGE 3 - pgModeAUTO =====
+  else if (currentPage == 3) {
+    switch(componentId) {
+      case 9: { // bStart - začni avtomatski cikel
+        // Preveri pogoje
+        if (!anglesCalibrated) {
+          Serial.println("[bStart] NAPAKA: Ni kalibracije!");
+          display.setText("tStatus_pg3", "NAPAKA: Ni kalibracije!");
+          return;
+        }
+        if (!anglesConfigured) {
+          Serial.println("[bStart] NAPAKA: Ni nastavljenih kotov!");
+          display.setText("tStatus_pg3", "NAPAKA: Ni kotov!");
+          return;
+        }
+        
+        // Preveri trenutni kot
+        float currentAngle = angleSensor.getCalibratedAngle();
+        if (currentAngle < calibratedMinAngle || currentAngle > calibratedMaxAngle) {
+          Serial.println("[bStart] NAPAKA: Kot izven mej!");
+          display.setText("tStatus_pg3", "NAPAKA: Pozicioniraj vreteno!");
+          return;
+        }
+        
+        S2Cycles cycles = inputs.getS2Cycles();
+        if (cycles == CYCLES_NONE) {
+          Serial.println("[bStart] NAPAKA: S2 ni nastavljen!");
+          display.setText("tStatus_pg3", "NAPAKA: Nastavi S2!");
+          return;
+        }
+        
+        // Vse OK - začni avtomatski cikel
+        Serial.println("========================================");
+        Serial.println("[bStart] START AVTOMATSKEGA CIKLA");
+        Serial.println("========================================");
+        
+        autoCycle.start(cycles, savedAngleStart, savedAngleStop,
+                       calibratedMinAngle, calibratedMaxAngle, anglesCalibrated,
+                       speedZacetni, speedSredina, speedKoncni, revPerAngle);
+        autoModeActive = true;
+        
+        display.setText("tStatus_pg3", "AUTO cikel zagnan!");
+        break;
+      }
         
       default:
-        Serial.print("Neznan gumb ID: ");
+        Serial.print("Neznan gumb ID na page3: ");
         Serial.println(componentId);
         break;
     }
@@ -566,24 +592,28 @@ void handleTouchRelease(uint8_t componentId) {
   Serial.print("Touch Release: ");
   Serial.println(componentId);
   
-  S1Mode mode = inputs.getS1Mode();
-  
-  // ===== PAGE 0 - MANUAL BUTTONS =====
-  if (currentPage == 0 && mode == MODE_MANUAL) {
+  // ===== PAGE 2 - pgModeMAN BUTTONS =====
+  if (currentPage == 2) {
     switch(componentId) {
-      case 17:  // bGor - ustavi premik
+      case 4:  // bGor - ustavi premik
         Serial.println("[bGor] Vreteno GOR - STOP");
         bGorPressed = false;
         outputs.stopSpindle();
         break;
         
-      case 18:  // bDol - ustavi premik
+      case 5:  // bDol - ustavi premik
         Serial.println("[bDol] Vreteno DOL - STOP");
         bDolPressed = false;
         outputs.stopSpindle();
         break;
         
-      // bBrus (19) in bPnev (20) sta toggle gumba - brez Release akcije
+      case 14: { // hRocno - slider za hitrost (Touch Release pošlje "ID14:x")
+        // To obdelamo v handleNextionEvents() ko pride "ID14:x"
+        Serial.println("[hRocno] Touch Release - čakam na ID14:value");
+        break;
+      }
+        
+      // bBrus (6) in bPnev (7) sta toggle gumba - brez Release akcije
       
       default:
         break;
@@ -647,6 +677,32 @@ void handleTouchRelease(uint8_t componentId) {
 void loop() {
   unsigned long currentMillis = millis();
   
+  // ===== S1 MODE TRACKING - Avtomatski preklop med pgModeOFF/MAN/AUTO =====
+  S1Mode currentS1Mode = inputs.getS1Mode();
+  if (currentS1Mode != lastS1Mode) {
+    // S1 stikalo se je spremenilo
+    Serial.print("[S1] Sprememba: ");
+    if (currentS1Mode == MODE_OFF) Serial.println("OFF");
+    else if (currentS1Mode == MODE_MANUAL) Serial.println("MANUAL");
+    else if (currentS1Mode == MODE_AUTO) Serial.println("AUTO");
+    
+    // Preklopi na ustrezno stran samo če smo na eni od mode strani (1,2,3)
+    if (currentPage >= 1 && currentPage <= 3) {
+      if (currentS1Mode == MODE_OFF && currentPage != 1) {
+        Serial.println("  -> Preklop na pgModeOFF");
+        display.showPage(1);
+      } else if (currentS1Mode == MODE_MANUAL && currentPage != 2) {
+        Serial.println("  -> Preklop na pgModeMAN");
+        display.showPage(2);
+      } else if (currentS1Mode == MODE_AUTO && currentPage != 3) {
+        Serial.println("  -> Preklop na pgModeAUTO");
+        display.showPage(3);
+      }
+    }
+    
+    lastS1Mode = currentS1Mode;
+  }
+  
   // Posodobi vhode
   inputs.update();
   
@@ -656,37 +712,133 @@ void loop() {
   // Posodobi AS5600 senzor
   angleSensor.update();
   
-  // Posodobi prikaz kota na Nextion zaslonu
+  // Posodobi prikaz kota xAngle na stranih ki ga imajo (1,2,3,5,7)
+  // Format: Xfloat n*10
+  if (currentPage == 1 || currentPage == 2 || currentPage == 3 || currentPage == 5 || currentPage == 7) {
+    display.setNumber("xAngle", (int32_t)(angleSensor.getCalibratedAngle() * 10));
+  }
+  
+  // Posodobi prikaz kota na Nextion zaslonu (za stare strani)
   display.setAngle(angleSensor.getCalibratedAngle());
   
-  // Posodobi podatke na page0 vsake 0.5s
-  static unsigned long lastPage0Update = 0;
-  if (currentPage == 0 && (currentMillis - lastPage0Update >= 500)) {
-    lastPage0Update = currentMillis;
+  // Posodobi podatke na page2 (pgModeMAN) vsake 0.5s
+  static unsigned long lastPage2Update = 0;
+  if (currentPage == 2 && (currentMillis - lastPage2Update >= 500)) {
+    lastPage2Update = currentMillis;
     
-    // Posodobi status vretena
-    display.setSpindleStatus(
-      outputs.isSpindleMoving(),
-      outputs.getSpindleDirection() == SPINDLE_UP,
-      outputs.getSpindleSpeed()
-    );
-    
-    // Posodobi število ciklov
-    S1Mode mode = inputs.getS1Mode();
-    if (mode == MODE_AUTO && autoCycle.isRunning()) {
-      display.setCycles(autoCycle.getCompletedCycles(), autoCycle.getTargetCycles());
-    } else {
-      S2Cycles cycles = inputs.getS2Cycles();
-      if (cycles == CYCLES_CONTINUOUS) {
-        display.setCycles(0, 99);  // 99 = continuous
+    // Posodobi tPomik - status motorja
+    if (outputs.isSpindleMoving()) {
+      if (outputs.getSpindleDirection() == SPINDLE_UP) {
+        display.setText("tPomik", "GOR");
+        // Nastavi zeleno barvo
+        Serial2.print("tPomik.pco=2016");  // Zelena
+        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
       } else {
-        display.setCycles(0, cycles);
+        display.setText("tPomik", "DOL");
+        // Nastavi zeleno barvo
+        Serial2.print("tPomik.pco=2016");  // Zelena
+        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
       }
+    } else {
+      display.setText("tPomik", "STOP");
+      // Nastavi rdečo barvo
+      Serial2.print("tPomik.pco=63488");  // Rdeča
+      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    }
+    
+    // Preveri in omogoči/onemogoči bPnev glede na kot
+    float currentAngle = angleSensor.getCalibratedAngle();
+    if (anglesCalibrated) {
+      bool inRange = (currentAngle >= calibratedMinAngle && currentAngle <= calibratedMaxAngle);
+      display.setButtonState("bPnev", inRange);
+      
+      // Posodobi status če je izven mej
+      if (currentAngle < calibratedMinAngle) {
+        display.setText("tStatus_pg2", "OPOZORILO: Kot < MIN!");
+      } else if (currentAngle > calibratedMaxAngle) {
+        display.setText("tStatus_pg2", "OPOZORILO: Kot > MAX!");
+      } else if (!outputs.isSpindleMoving() && !outputs.isGrindingMotorOn() && !outputs.isKnifePusherOn()) {
+        display.setText("tStatus_pg2", "Ročni način - uporabite tipke ali gumbe");
+      }
+    } else {
+      // Ni kalibracije - bPnev vedno omogočen
+      display.setButtonState("bPnev", true);
     }
   }
   
-  // Če smo na page1 in nastavljamo kote, posodabljaj prikaz v realnem času
-  if (currentPage == 1 && angleSettingMode != ANGLE_IDLE) {
+  // Posodobi podatke na page3 (pgModeAUTO) vsake 0.5s
+  static unsigned long lastPage3Update = 0;
+  if (currentPage == 3 && (currentMillis - lastPage3Update >= 500)) {
+    lastPage3Update = currentMillis;
+    
+    // Posodobi tCikli - format "izvedeni/nastavljeni"
+    S2Cycles cycles = inputs.getS2Cycles();
+    char cikliText[20];
+    if (cycles == CYCLES_CONTINUOUS) {
+      sprintf(cikliText, "%d/∞", autoCycle.getCompletedCycles());
+    } else {
+      sprintf(cikliText, "%d/%d", autoCycle.getCompletedCycles(), (int)cycles);
+    }
+    display.setText("tCikli", cikliText);
+    
+    // Posodobi tPomik - status motorja vretena
+    if (outputs.isSpindleMoving()) {
+      if (outputs.getSpindleDirection() == SPINDLE_UP) {
+        display.setText("tPomik", "GOR");
+        // Nastavi zeleno barvo
+        Serial2.print("tPomik.pco=2016");  // Zelena
+        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+      } else {
+        display.setText("tPomik", "DOL");
+        // Nastavi zeleno barvo
+        Serial2.print("tPomik.pco=2016");  // Zelena
+        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+      }
+    } else {
+      display.setText("tPomik", "STOP");
+      // Nastavi rdečo barvo
+      Serial2.print("tPomik.pco=63488");  // Rdeča
+      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    }
+    
+    // Posodobi tKamen - status brusnega kamna
+    if (outputs.isGrindingMotorOn()) {
+      display.setText("tKamen", "RUN");
+      // Nastavi modro barvo
+      Serial2.print("tKamen.pco=1024");  // Modra
+      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    } else {
+      display.setText("tKamen", "STOP");
+      // Nastavi rdečo barvo
+      Serial2.print("tKamen.pco=63488");  // Rdeča
+      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    }
+    
+    // Posodobi tCilinder - status pnevmatskega cilindra
+    BrusOutputs::KnifeCylinderState cylinderState = outputs.getKnifeCylinderState();
+    if (cylinderState == BrusOutputs::KNIFE_MOVING_OUT) {
+      display.setText("tCilinder", "OUT");
+      // Nastavi modro barvo
+      Serial2.print("tCilinder.pco=1024");  // Modra
+      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    } else if (cylinderState == BrusOutputs::KNIFE_MOVING_IN) {
+      display.setText("tCilinder", "IN");
+      // Nastavi modro barvo
+      Serial2.print("tCilinder.pco=1024");  // Modra
+      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    } else {
+      display.setText("tCilinder", "STOP");
+      // Nastavi rdečo barvo
+      Serial2.print("tCilinder.pco=63488");  // Rdeča
+      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+    }
+    
+    // Preveri pogoje za bStart in posodobi tStatus_pg3
+    updateAutoModeReadiness();
+  }
+  
+  // Če smo na page7 (pgAngle) in nastavljamo kote, posodabljaj prikaz v realnem času
+  if (currentPage == 7 && angleSettingMode != ANGLE_IDLE) {
     float previousAngle = (angleSettingMode == ANGLE_SET_START) ? tempAngleStart : tempAngleStop;
     
     if (angleSettingMode == ANGLE_SET_START) {
@@ -705,8 +857,8 @@ void loop() {
     updatePage1AngleDisplay();
   }
   
-  // Če smo na page3 in izvajamo referenčni hod, posodabljaj
-  if (currentPage == 3 && (refState == REF_FIND_MIN_DOWN || refState == REF_FIND_MIN_UP || refState == REF_FIND_MAX)) {
+  // Če smo na page5 (pgRef) in izvajamo referenčni hod, posodabljaj
+  if (currentPage == 5 && (refState == REF_FIND_MIN_DOWN || refState == REF_FIND_MIN_UP || refState == REF_FIND_MAX)) {
     updateReferenceRun();
   }
   
@@ -725,16 +877,6 @@ void loop() {
     if (mode == MODE_OFF) Serial.println("OFF");
     else if (mode == MODE_MANUAL) Serial.println("MANUAL");
     else if (mode == MODE_AUTO) Serial.println("AUTO");
-    
-    // Posodobi stanje gumbov glede na način (samo na page0)
-    if (currentPage == 0) {
-      bool enableButtons = (mode == MODE_MANUAL);
-      display.setButtonState("bGor", enableButtons);
-      display.setButtonState("bDol", enableButtons);
-      display.setButtonState("bBrus", enableButtons);
-      display.setButtonState("bPnev", enableButtons);
-      display.setButtonState("bSettings", enableButtons);
-    }
     
     // Ob spremembi iz AUTO v karkoli drugega ustavi cikel
     if (lastMode == MODE_AUTO && mode != MODE_AUTO) {
@@ -772,18 +914,18 @@ void loop() {
   
   // ===== ROČNI NAČIN =====
   else if (mode == MODE_MANUAL) {
-    // Kontrola vretena - fizične tipke (S41/S42) delujejo na page0 in page1
-    // Na page0: fizične tipke ALI Nextion gumbi (bGor/bDol)
-    // Na page1: samo fizične tipke (za nastavitev kotov)
+    // Kontrola vretena - fizične tipke (S41/S42) delujejo na page1 in page2
+    // Na page1 (pgModeOFF): samo fizične tipke (samo med nastavljanjem kotov)
+    // Na page2 (pgModeMAN): fizične tipke IN Nextion gumbi (bGor/bDol)
     
     bool wantMoveDown = false;
     bool wantMoveUp = false;
     
-    if (currentPage == 0) {
-      // Page0 - ročno upravljanje - delujejo fizične tipke IN Nextion gumbi
+    if (currentPage == 2) {
+      // Page2 (pgModeMAN) - ročno upravljanje - delujejo fizične tipke IN Nextion gumbi
       wantMoveDown = inputs.isS41DownPressed() || bDolPressed;
       wantMoveUp = inputs.isS42UpPressed() || bGorPressed;
-    } 
+    }
     else if (currentPage == 1 && (angleSettingMode == ANGLE_SET_START || angleSettingMode == ANGLE_SET_STOP)) {
       // Page1 - med nastavljanjem kotov - samo fizične tipke
       wantMoveDown = inputs.isS41DownPressed();
@@ -802,20 +944,20 @@ void loop() {
     if (anglesCalibrated) {
       if (wantMoveUp && currentAngle >= calibratedMaxAngle) {
         outputs.stopSpindle();
-        if (currentPage == 0) {
-          display.setStatus("ALARM: Max limit!");
-        } else if (currentPage == 1) {
+        if (currentPage == 1) {
           display.setText("tStatus_pg1", "ALARM: Max limit!");
+        } else if (currentPage == 2) {
+          display.setText("tStatus_pg2", "ALARM: Max limit!");
         }
         Serial.println("ALARM: Dosežen maksimalni limit!");
         wantMoveUp = false;
       }
       if (wantMoveDown && currentAngle <= calibratedMinAngle) {
         outputs.stopSpindle();
-        if (currentPage == 0) {
-          display.setStatus("ALARM: Min limit!");
-        } else if (currentPage == 1) {
+        if (currentPage == 1) {
           display.setText("tStatus_pg1", "ALARM: Min limit!");
+        } else if (currentPage == 2) {
+          display.setText("tStatus_pg2", "ALARM: Min limit!");
         }
         Serial.println("ALARM: Dosežen minimalni limit!");
         wantMoveDown = false;
@@ -855,13 +997,6 @@ void loop() {
   
   // ===== AVTOMATSKI NAČIN =====
   else if (mode == MODE_AUTO) {
-    // Periodično posodobi pripravljenost gumba bSettings na page0
-    static unsigned long lastAutoCheck = 0;
-    if (currentPage == 0 && (currentMillis - lastAutoCheck > 1000)) {
-      updateAutoModeReadiness();
-      lastAutoCheck = currentMillis;
-    }
-    
     // Posodobi avtomatski cikel
     autoCycle.update();
     
@@ -869,8 +1004,8 @@ void loop() {
     if (!autoModeActive && !autoCycle.isRunning()) {
       // Preveri če so koti nastavljeni
       if (!anglesConfigured) {
-        Serial.println("NAPAKA: Koti niso nastavljeni - uporabite page1!");
-        display.setStatus("NAPAKA: Nastavi kote!");
+        Serial.println("NAPAKA: Koti niso nastavljeni - uporabite page7!");
+        // V novem GUI je page3 za start, brez dodatnih sporočil tukaj
       } else {
         S2Cycles cycles = inputs.getS2Cycles();
         
@@ -903,7 +1038,6 @@ void loop() {
       savedAngleStop = 0.0;
       anglesConfigured = false;
       
-      display.setStatus("Koti izbrisani");
       display.setAngleRange(0.0, 0.0);
       
       Serial.println("*** RESET - Koti izbrisani ***");
@@ -1186,7 +1320,10 @@ void updateBNastaviKoteText() {
 
 void updateAutoModeReadiness() {
   // Preveri ali so vsi pogoji za avtomatski cikel izpolnjeni
-  // in posodobi gumb bSettings na page0
+  // in posodobi gumb bStart in status na page3 (pgModeAUTO)
+  
+  // Funkcija se uporablja samo za page3
+  if (currentPage != 3) return;
   
   bool ready = true;
   String status = "";
@@ -1194,43 +1331,39 @@ void updateAutoModeReadiness() {
   // Preveri kalibracijo (referenčni hod)
   if (!anglesCalibrated) {
     ready = false;
-    status = "Ni kalibracije!";
+    status = "Najprej izvedi referenčni hod!";
   }
   // Preveri nastavljene kote
   else if (!anglesConfigured) {
     ready = false;
-    status = "Ni kotov!";
+    status = "Nastavi začetni in končni kot!";
   }
-  // Preveri število ciklov
   else {
-    S2Cycles cycles = inputs.getS2Cycles();
-    if (cycles == CYCLES_NONE) {
+    // Preveri trenutni kot
+    float currentAngle = angleSensor.getCalibratedAngle();
+    if (currentAngle < calibratedMinAngle || currentAngle > calibratedMaxAngle) {
       ready = false;
-      status = "Nastavi S2!";
+      status = "Pozicioniraj vreteno med MIN in MAX!";
+    }
+    
+    // Preveri število ciklov
+    if (ready) {
+      S2Cycles cycles = inputs.getS2Cycles();
+      if (cycles == CYCLES_NONE) {
+        ready = false;
+        status = "Nastavi S2 stikalo (cikli)!";
+      } else if (autoCycle.isRunning()) {
+        ready = false;
+        status = "Avtomatski cikel v teku...";
+      } else {
+        status = "Pripravljeno - pritisnite START";
+      }
     }
   }
   
-  // Posodobi gumb bSettings (id=16)
-  if (ready) {
-    // Vse OK - omogoči START
-    display.setText("bSettings", "START AUTO");
-    // Nastavi barve gumba z uporabo serial objekta
-    Serial2.print("bSettings.bco=2016");    // Zelena
-    Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
-    Serial2.print("bSettings.pco=0");       // Črna
-    Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
-    display.setButtonState("bSettings", true);    // Omogoči
-    display.setStatus("Pripravljen za AUTO");
-  } else {
-    // Pogoji niso izpolnjeni
-    display.setText("bSettings", "Nastavitve");
-    Serial2.print("bSettings.bco=50712");   // Siva
-    Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
-    Serial2.print("bSettings.pco=65535");   // Bela
-    Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
-    display.setButtonState("bSettings", true);    // Vedno omogočen (za dostop do nastavitev)
-    display.setStatus(status.c_str());
-  }
+  // Posodobi gumb in status na page3
+  display.setButtonState("bStart", ready);
+  display.setText("tStatus_pg3", status.c_str());
 }
 
 // ===== FUNKCIJE ZA REFERENČNI HOD (PAGE 3) =====
@@ -1436,4 +1569,115 @@ void finishReferenceRun() {
   sprintf(statusMsg, "REFERENCNI HOD ZAKLJUCEN!\rRazpon: %.1f deg | Obrati: %lu\rOb/deg: %.1f | Cas: %.1f s\rPodatki shranjeni v NVS", 
           angleRange, refRevolutions, revPerAngle, elapsedTime);
   display.setText("tStatus_pg3", statusMsg);
+}
+
+// ===== PAGE CHANGE HANDLER =====
+void handlePageChange(uint8_t newPage) {
+  Serial.print("[PAGE] Preklop na stran ");
+  Serial.println(newPage);
+  
+  currentPage = newPage;
+  
+  // Posebna logika za vsako stran
+  switch(newPage) {
+    case 0:  // pgIntro
+      Serial.println("  -> pgIntro (startup)");
+      // Pošlji podatke v globalne spremenljivke na pgModeOFF
+      // Format: Xfloat × 10, Number pa direktno
+      display.setNumber("pgModeOFF.gMinAngle", (int32_t)(calibratedMinAngle * 10));
+      display.setNumber("pgModeOFF.gMaxAngle", (int32_t)(calibratedMaxAngle * 10));
+      display.setNumber("pgModeOFF.gStartAngle", (int32_t)(savedAngleStart * 10));
+      display.setNumber("pgModeOFF.gStopAngle", (int32_t)(savedAngleStop * 10));
+      display.setNumber("pgModeOFF.gSpeed", (int32_t)(speedRocno));  // Number - brez *10
+      
+      Serial.println("  -> Podatki poslani v pgModeOFF globalne spremenljivke");
+      // pgIntro se avtomatsko preklopi na pgModeOFF
+      break;
+      
+    case 1: { // pgModeOFF
+      Serial.println("  -> pgModeOFF (osnovna stran)");
+      
+      // Preveri pogoje in nastavi statusno sporočilo
+      String statusMsg = "";
+      
+      if (!anglesCalibrated) {
+        statusMsg = "Najprej v Nastavitvah izvedite referencni hod!";
+      } else if (!anglesConfigured) {
+        statusMsg = "Nastavite zacetni in koncni kot!";
+      } else {
+        statusMsg = "Preklopite stikalo na MAN ali AUTO!";
+      }
+      
+      display.setText("tStatus_pg1", statusMsg.c_str());
+      Serial.print("  -> Status: ");
+      Serial.println(statusMsg);
+      
+      // Preveri S1 stikalo in preklopi če je potrebno
+      S1Mode mode = inputs.getS1Mode();
+      lastS1Mode = mode;
+      
+      if (mode == MODE_MANUAL) {
+        Serial.println("  -> S1 = MANUAL, preklop na pgModeMAN");
+        display.showPage(2);
+      } else if (mode == MODE_AUTO) {
+        Serial.println("  -> S1 = AUTO, preklop na pgModeAUTO");
+        display.showPage(3);
+      } else {
+        Serial.println("  -> S1 = OFF, ostajamo na pgModeOFF");
+      }
+      break;
+    }
+      
+    case 2:  // pgModeMAN
+      Serial.println("  -> pgModeMAN (ročni način)");
+      // Naloži hitrost iz preferences
+      display.setProgress("hRocno", speedRocno);
+      
+      // Preveri pogoje in nastavi statusno sporočilo
+      if (!anglesCalibrated) {
+        display.setText("tStatus_pg2", "OPOZORILO: Ni referenčnega hoda!");
+      } else {
+        display.setText("tStatus_pg2", "Ročni način - uporabite tipke ali gumbe");
+      }
+      break;
+      
+    case 3:  // pgModeAUTO
+      Serial.println("  -> pgModeAUTO (avtomatski način)");
+      // Naloži hitrost
+      display.setNumber("nSpeed", (int32_t)(speedZacetni));  // Number - brez *10
+      
+      // Preveri pogoje in nastavi statusno sporočilo ter bStart omogočenost
+      updateAutoModeReadiness();
+      break;
+      
+    case 4:  // pgSettings
+      Serial.println("  -> pgSettings (menu nastavitev)");
+      break;
+      
+    case 5:  // pgRef
+      Serial.println("  -> pgRef (referenčni hod)");
+      // Resetiraj stanje
+      refState = REF_IDLE;
+      break;
+      
+    case 6:  // pgSpeed
+      Serial.println("  -> pgSpeed (hitrosti)");
+      // Posodobi prikaz hitrosti
+      display.setProgress("hZacetni", speedZacetni);
+      display.setProgress("hSredina", speedSredina);
+      display.setProgress("hKoncni", speedKoncni);
+      display.setProgress("hRocno", speedRocno);
+      break;
+      
+    case 7:  // pgAngle
+      Serial.println("  -> pgAngle (nastavitev kotov)");
+      // Inicializiraj začasne kote
+      tempAngleStart = savedAngleStart;
+      tempAngleStop = savedAngleStop;
+      anglesChanged = false;
+      angleSettingMode = ANGLE_IDLE;
+      updatePage1AngleDisplay();
+      display.setButtonState("bSave", false);
+      break;
+  }
 }

@@ -12,6 +12,7 @@ AS5600::AS5600() {
     lastTiltState = false;
     sensorPresent = false;
     magnetStatus = 0;
+    simulatedAngle = 45.0;  // Default simulirana vrednost
 }
 
 bool AS5600::begin(TwoWire* i2c) {
@@ -60,7 +61,34 @@ uint16_t AS5600::readRawAngle() {
 }
 
 void AS5600::update() {
-    if (!sensorPresent) return;
+    if (!sensorPresent) {
+        // Simulator mode - uporabi simuliran kot
+        currentAngle = simulatedAngle;
+        calibratedAngle = simulatedAngle - angleOffset;
+        
+        // Normaliziraj na 0-360°
+        if (calibratedAngle < 0) {
+            calibratedAngle += 360.0;
+        } else if (calibratedAngle >= 360.0) {
+            calibratedAngle -= 360.0;
+        }
+        
+        // Detekcija naklona za simuliran kot
+        if (!lastTiltState) {
+            if (calibratedAngle <= TILT_ANGLE_THRESHOLD) {
+                tiltDetected = true;
+                lastTiltState = true;
+            }
+        } else {
+            if (calibratedAngle > (TILT_ANGLE_THRESHOLD + ANGLE_HYSTERESIS)) {
+                tiltDetected = false;
+                lastTiltState = false;
+            } else {
+                tiltDetected = true;
+            }
+        }
+        return;
+    }
     
     // Preberi surovi kot
     rawAngle = readRawAngle();

@@ -18,17 +18,18 @@ BrusInputs::BrusInputs() {
 }
 
 void BrusInputs::begin() {
-    // Inicializacija SPI
-    spi = new SPIClass(HSPI);
-    spi->begin(SPI_CLK, SPI_MISO, -1, SPI_LD);  // CLK, MISO, MOSI (ni ga), CS
-    
-    // Nastavitev pinov
+    // Nastavitev pinov za bit-banging (ne uporabljamo SPI hardware)
     pinMode(SPI_LD, OUTPUT);
-    digitalWrite(SPI_LD, HIGH);  // LD idle HIGH
+    pinMode(SPI_CLK, OUTPUT);
+    pinMode(SPI_MISO, INPUT);
     
-    pinMode(TEMP_ALARM, INPUT);
+    // Initial state
+    digitalWrite(SPI_CLK, LOW);
+    digitalWrite(SPI_LD, HIGH);  // HIGH = shift mode ready
     
-    Serial.println("BrusInputs inicializiran - SPI ready");
+    pinMode(TEMP_ALARM, INPUT_PULLUP);  // Pull-up za TOK (active-low signal)
+    
+    Serial.println("BrusInputs inicializiran - Bit-banging mode");
     
     // Inicializacija I2C za AS5600
     Wire.begin(I2C_SDA, I2C_SCL);
@@ -44,24 +45,25 @@ void BrusInputs::begin() {
 uint16_t BrusInputs::readSN65HVS882() {
     uint16_t data = 0;
     
-    // LD pulse - load data from inputs to shift register
+    // 1. Load pulse: LD LOW -> HIGH (naloži paralelne vhode v shift register)
     digitalWrite(SPI_LD, LOW);
-    delayMicroseconds(1);
+    delayMicroseconds(5);  // Load pulse width
     digitalWrite(SPI_LD, HIGH);
-    delayMicroseconds(1);
+    delayMicroseconds(2);  // Setup time
     
-    // Beremo 16 bitov (2x 8-bit čipa v kaskadi)
-    spi->beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE));
-    
-    // Beremo prvi bajt (prvi SN65HVS882)
-    uint8_t byte1 = spi->transfer(0x00);
-    // Beremo drugi bajt (drugi SN65HVS882)
-    uint8_t byte2 = spi->transfer(0x00);
-    
-    spi->endTransaction();
-    
-    // Kombiniramo v 16-bitno vrednost
-    data = (byte1 << 8) | byte2;
+    // 2. Shift 16 bitov ven (bit-banging)
+    for (int i = 0; i < 16; i++) {
+        // Preberi trenutni bit na MISO (MSB first)
+        if (digitalRead(SPI_MISO)) {
+            data |= (1 << (15 - i));  // MSB first: bit 15, 14, 13, ... 0
+        }
+        
+        // CLK pulse: LOW -> HIGH -> LOW
+        digitalWrite(SPI_CLK, HIGH);
+        delayMicroseconds(1);
+        digitalWrite(SPI_CLK, LOW);
+        delayMicroseconds(1);
+    }
     
     return data;
 }
@@ -89,6 +91,9 @@ bool BrusInputs::getInputDebounced(uint8_t inputNumber) {
 }
 
 void BrusInputs::update() {
+    // Feed watchdog
+    yield();
+    
     // Preberi vhode
     lastInputState = inputState;
     inputState = readSN65HVS882();
@@ -103,8 +108,25 @@ void BrusInputs::update() {
     }
     lastCounterState = currentCounter;
     
-    // Temperatura alarm
-    tempAlarm = digitalRead(TEMP_ALARM);
+    // Temperatura alarm (TOK signal je active-low: LOW=alarm, HIGH=OK)
+    tempAlarm = !digitalRead(TEMP_ALARM);
+    
+    // ===== DEBUG: Izpis vhodov vsaki 2 sekundi =====
+    static unsigned long lastDebugPrint = 0;
+    if (millis() - lastDebugPrint >= 2000) {
+        lastDebugPrint = millis();
+        Serial.print("[INPUTS DEBUG] 16-bit: ");
+        for (int i = 15; i >= 0; i--) {
+            Serial.print((inputState >> i) & 0x01);
+            if (i == 8) Serial.print(" ");  // Presledek med byte1 in byte2
+        }
+        Serial.print(" (0x");
+        Serial.print(inputState, HEX);
+        Serial.print(") | Bit0=");
+        Serial.print(getInputBit(0));
+        Serial.print(" | IN_S43(bit0)=");
+        Serial.println(getInputBit(IN_S43_SAFETY));
+    }
 }
 
 // ===== STIKALO S1 - MODE =====

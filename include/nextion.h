@@ -22,6 +22,7 @@ private:
     bool lastBrusState;
     bool lastPnevState;
     bool lastSpindleMoving;
+    uint8_t lastSpindleSpeed;
     float lastAngleStart;
     float lastAngleStop;
     

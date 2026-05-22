@@ -8,7 +8,6 @@
 
 class BrusInputs {
 private:
-    SPIClass* spi;
     uint16_t inputState;        // 16 bitov za oba SN65HVS882
     uint16_t lastInputState;    // Za detekcijo sprememb
     

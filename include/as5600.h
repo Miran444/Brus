@@ -37,6 +37,9 @@ private:
     bool sensorPresent;
     uint8_t magnetStatus;
     
+    // Simulator mode (ko senzor ni prisoten)
+    float simulatedAngle;  // Simuliran kot za testiranje brez senzorja
+    
     // I2C funkcije
     uint16_t readRawAngle();
     uint8_t readRegister8(uint8_t reg);
@@ -69,6 +72,10 @@ public:
     
     // Debug
     void printStatus();
+    
+    // Simulator mode (za testiranje brez senzorja)
+    void setSimulatedAngle(float angle) { simulatedAngle = angle; }
+    float getSimulatedAngle() { return simulatedAngle; }
 };
 
 #endif // AS5600_H

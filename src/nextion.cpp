@@ -13,6 +13,7 @@ NextionDisplay::NextionDisplay() {
     lastBrusState = false;
     lastPnevState = false;
     lastSpindleMoving = false;
+    lastSpindleSpeed = 255;
     lastAngleStart = -999.0;
     lastAngleStop = -999.0;
 }
@@ -32,7 +33,7 @@ void NextionDisplay::begin() {
     
     // Test komunikacije
     sendCommand("page 0");  // Pojdi na stran 0
-    setText("t0", "BRUS v1.0");
+    //setText("t0", "BRUS v1.0");
     
     delay(100);
 }
@@ -263,14 +264,17 @@ void NextionDisplay::setSpindleStatus(bool moving, bool directionUp, uint8_t spe
         lastSpindleMoving = moving;
     }
     
-    // Hitrost
-    setProgress("jSpeed", (speed * 100) / 255);  // Progress bar 0-100%
+    // Hitrost - ZAČASNO ONEMOGOČENO (jSpeed objekt ne obstaja v HMI)
+    // if (speed != lastSpindleSpeed) {
+    //     setProgress("jSpeed", (speed * 100) / 255);  // Progress bar 0-100%
+    //     lastSpindleSpeed = speed;
+    // }
 }
 
 // ===== BRANJE DOGODKOV =====
 
 bool NextionDisplay::available() {
-    return serial->available() > 0;
+    return serial->available() > 2;  // Minimalno 3 bajti za validen event
 }
 
 uint8_t NextionDisplay::readTouchEvent() {
@@ -402,9 +406,17 @@ void NextionDisplay::update(unsigned long currentMillis) {
     }
     lastUpdateTime = currentMillis;
     
-    // Preberi morebitne dogodke iz Nextiona
-    while (available()) {
+    // Preberi morebitne dogodke iz Nextiona (max 10 dogodkov na cikel)
+    int eventsProcessed = 0;
+    while (available() && eventsProcessed < 10) {
         readTouchEvent();
+        eventsProcessed++;
+        yield();  // Feed watchdog
+    }
+    
+    // Če je buffer še poln, izpiši opozorilo
+    if (eventsProcessed >= 10 && available()) {
+        Serial.println("[NEXTION] Buffer overflow - too many events!");
     }
 }
 

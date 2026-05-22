@@ -68,7 +68,7 @@ enum S2Cycles {
 // ===== UART PINS za Nextion Display =====
 #define NEXTION_TX      17      // GPIO17 - TX (ESP32 -> Nextion RX)
 #define NEXTION_RX      18      // GPIO18 - RX (ESP32 <- Nextion TX)
-#define NEXTION_BAUD    115200  // Baudrate za Nextion
+#define NEXTION_BAUD    9600  // Baudrate za Nextion
 #define NEXTION_UPDATE_INTERVAL 200  // Interval posodabljanja zaslona (ms)
 
 // ===== GPIO IZHODI =====

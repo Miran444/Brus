@@ -500,6 +500,11 @@ void NextionDisplay::showPage(uint8_t pageId) {
     endCommand();
 }
 
+void NextionDisplay::sendRawCommand(const char* cmd) {
+    // Pošlje custom ukaz (za atribute kot vvs0, ipd.)
+    sendCommand(cmd);
+}
+
 void NextionDisplay::setGlobalVariable(const char* varName, int32_t value) {
     // Nastavi globalno spremenljivko (Variable v Nextion HMI)
     serial->print(varName);

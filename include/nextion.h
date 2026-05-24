@@ -120,6 +120,7 @@ public:
     void setText(const char* obj, const char* text);
     void setNumber(const char* obj, int32_t value);
     void setProgress(const char* obj, int32_t value);
+    void sendRawCommand(const char* cmd);     // Pošlje raw ukaz (za custom atribute)
     void setGlobalVariable(const char* varName, int32_t value);  // Nastavi globalno spremenljivko
     int32_t getGlobalVariable(const char* varName);  // Preberi globalno spremenljivko
     void enableManualButtons(bool enable);  // Omogoči/onemogoči ročne gumbe

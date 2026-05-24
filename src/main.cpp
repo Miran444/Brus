@@ -73,6 +73,10 @@ float tempAngleStart = 0.0;  // Začasni koti pred shranjevanjem
 float tempAngleStop = 0.0;
 bool anglesChanged = false;  // Ali so se koti spremenili (za aktivacijo bSave)
 
+// Začasne spremenljivke za parsing ID5/ID6 iz bSave gumba
+static int16_t receivedID5 = -1;  // xStopAngle × 10
+static int16_t receivedID6 = -1;  // xStartAngle × 10
+
 // Page5 (pgRef) - Referenčni hod
 enum ReferenceState {
   REF_IDLE = 0,           // Ni aktivno
@@ -102,9 +106,11 @@ uint8_t speedToPWM(uint8_t percent);
 void startReferenceRun();
 void updateReferenceRun();
 void finishReferenceRun();
-void updatePage1AngleDisplay();
+void updatePage7AngleDisplay();
 void updateBNastaviKoteText();
+void processSavedAngles();
 void updateAutoModeReadiness();
+void setXFloatValue(const char* objName, float value);
 
 // ===== NEXTION CALLBACK FUNKCIJE =====
 void onNextionTouch(uint8_t pageId, uint8_t componentId, bool isPress) {
@@ -245,17 +251,42 @@ void handleStringData(const String& data) {
     return;
   }
   
-  // Preveri če je ID6: event (hSredina slider na page6)
+  // Preveri če je ID6: event - lahko je hSredina (page6) ALI xStartAngle (page7)
   if (data.startsWith("ID6:")) {
     String valueStr = data.substring(4);
-    uint8_t value = valueStr.toInt();
-    if (value < 50) value = 50;
-    if (value > 100) value = 100;
-    speedSredina = value;
-    Serial.print("[hSredina] Hitrost sredina: ");
-    Serial.print(speedSredina);
-    Serial.println("%");
-    saveSpeedsToPreferences();
+    
+    // page6 (pgSpeed): ID6 = hSredina slider (hitrost 50-100%)
+    if (currentPage == 6) {
+      uint8_t value = valueStr.toInt();
+      if (value < 50) value = 50;
+      if (value > 100) value = 100;
+      speedSredina = value;
+      Serial.print("[hSredina] Hitrost sredina: ");
+      Serial.print(speedSredina);
+      Serial.println("%");
+      saveSpeedsToPreferences();
+      return;
+    }
+    
+    // page7 (pgAngle): ID6 = xStartAngle (začetni kot × 10)
+    if (currentPage == 7) {
+      receivedID6 = valueStr.toInt();
+      Serial.print("[ID6] xStartAngle prejeto: ");
+      Serial.print(receivedID6);
+      Serial.print(" (");
+      Serial.print(receivedID6 / 10.0, 1);
+      Serial.println("°)");
+      
+      // Če imamo obe vrednosti, obdelaj in shrani
+      if (receivedID5 >= 0) {
+        processSavedAngles();
+      }
+      return;
+    }
+    
+    // Če nismo na page6 ali page7, ignoriraj
+    Serial.print("[ID6] Neznan kontekst - currentPage: ");
+    Serial.println(currentPage);
     return;
   }
   
@@ -273,38 +304,25 @@ void handleStringData(const String& data) {
     return;
   }
   
-  // Parsing kotov iz page7 (pgAngle) - format: "ID5:357;ID6:80"
-  float start, stop;
-  if (display.parseAngleSettings(data, start, stop)) {
-    // Validacija: Začetni kot mora biti večji od končnega
-    if (start <= stop) {
-      Serial.println("[ANGLE] NAPAKA: Začetni kot mora biti večji od končnega!");
-      Serial.print("  Start: ");
-      Serial.print(start, 1);
-      Serial.print("°, Stop: ");
-      Serial.print(stop, 1);
-      Serial.println("°");
-      display.setText("tStatus_pg1", "NAPAKA: Začetni > Končni!");
-      return;
+  // Parsing kotov iz page7 (pgAngle) - bSave gumb pošlje dva ločena eventa:
+  // 1. "#ID5:" + 2 bajta (xStopAngle.val) - končni kot × 10
+  // 2. "#ID6:" + 2 bajta (xStartAngle.val) - začetni kot × 10
+  
+  // Preveri če je ID5: event (xStopAngle na page7)
+  if (data.startsWith("ID5:") && currentPage == 7) {
+    String valueStr = data.substring(4);
+    receivedID5 = valueStr.toInt();
+    Serial.print("[ID5] xStopAngle prejeto: ");
+    Serial.print(receivedID5);
+    Serial.print(" (");
+    Serial.print(receivedID5 / 10.0, 1);
+    Serial.println("°)");
+    
+    // Če imamo obe vrednosti, obdelaj in shrani
+    if (receivedID6 >= 0) {
+      processSavedAngles();
     }
-    
-    // Koti uspešno parsirani
-    tempAngleStart = start;
-    tempAngleStop = stop;
-    anglesChanged = true;
-    
-    Serial.print("[ANGLE] Nastavljeni: Start=");
-    Serial.print(tempAngleStart, 1);
-    Serial.print("°, Stop=");
-    Serial.print(tempAngleStop, 1);
-    Serial.println("°");
-    display.setText("tStatus_pg1", "Koti OK - pritisnite Save!");
-    
-    // Posodobi prikaz
-    updatePage1AngleDisplay();
-    
-    // Aktiviraj bSave gumb
-    display.setButtonState("bSave", true);
+    return;
   }
 }
 
@@ -339,13 +357,36 @@ void handleTouchPress(uint8_t componentId) {
         Serial.println(brusActive ? "ON" : "OFF");
         break;
         
-      case 7:  // bPnev - toggle ventil noža
-        pnevActive = !pnevActive;
-        outputs.setKnifePusher(pnevActive);
-        display.setPnevState(pnevActive);
-        Serial.print("[bPnev] Ventil noža: ");
-        Serial.println(pnevActive ? "ON" : "OFF");
+      case 7: { // bPnev - toggle ventil noža (samo če je kot v mejah)
+        // Preveri ali je kot v mejah (samo če je kalibracija izvedena)
+        if (anglesCalibrated) {
+          float currentAngle = angleSensor.getCalibratedAngle();
+          if (currentAngle >= calibratedMinAngle && currentAngle <= calibratedMaxAngle) {
+            pnevActive = !pnevActive;
+            outputs.setKnifePusher(pnevActive);
+            display.setPnevState(pnevActive);
+            Serial.print("[bPnev] Ventil noža: ");
+            Serial.println(pnevActive ? "ON" : "OFF");
+          } else {
+            Serial.print("[bPnev] NAPAKA: Kot izven mej! Trenutni: ");
+            Serial.print(currentAngle, 1);
+            Serial.print("°, Meje: ");
+            Serial.print(calibratedMinAngle, 1);
+            Serial.print("-");
+            Serial.print(calibratedMaxAngle, 1);
+            Serial.println("°");
+            display.setText("tStatus_pg2", "NAPAKA: Kot izven mej!");
+          }
+        } else {
+          // Ni kalibracije - dovoli uporabo brez preverjanja
+          pnevActive = !pnevActive;
+          outputs.setKnifePusher(pnevActive);
+          display.setPnevState(pnevActive);
+          Serial.print("[bPnev] Ventil noža: ");
+          Serial.println(pnevActive ? "ON" : "OFF");
+        }
         break;
+      }
         
       default:
         Serial.print("Neznan gumb ID na page2: ");
@@ -356,8 +397,25 @@ void handleTouchPress(uint8_t componentId) {
   // ===== PAGE 3 - pgModeAUTO =====
   else if (currentPage == 3) {
     switch(componentId) {
-      case 9: { // bStart - začni avtomatski cikel
-        // Preveri pogoje
+      case 9: { // bStart - začni/ustavi avtomatski cikel
+        // Če je cikel že aktiven, ga ustavi
+        if (autoCycle.isRunning()) {
+          Serial.println("========================================");
+          Serial.println("[bStart] STOP AVTOMATSKEGA CIKLA");
+          Serial.println("========================================");
+          
+          autoCycle.stop();
+          autoModeActive = false;
+          
+          display.setText("bStart", "START");
+          display.setText("tStatus_pg3", "Cikel ustavljen");
+          
+          // Posodobi bStart omogočenost
+          updateAutoModeReadiness();
+          break;
+        }
+        
+        // Sicer začni nov cikel - preveri pogoje
         if (!anglesCalibrated) {
           Serial.println("[bStart] NAPAKA: Ni kalibracije!");
           display.setText("tStatus_pg3", "NAPAKA: Ni kalibracije!");
@@ -394,6 +452,7 @@ void handleTouchPress(uint8_t componentId) {
                        speedZacetni, speedSredina, speedKoncni, revPerAngle);
         autoModeActive = true;
         
+        display.setText("bStart", "STOP");
         display.setText("tStatus_pg3", "AUTO cikel zagnan!");
         break;
       }
@@ -411,14 +470,41 @@ void handleTouchPress(uint8_t componentId) {
   // ===== PAGE 5 - pgRef (REFERENČNI HOD) =====
   else if (currentPage == 5) {
     switch(componentId) {
-      case 3:  // bRefStart - začni referenčni hod
-        if (refState == REF_IDLE) {
-          Serial.println("[bRefStart] Začetek referenčnega hoda");
-          startReferenceRun();
-        } else {
-          Serial.println("[bRefStart] Referenčni hod že teče!");
+      case 3: { // bRefStart - začni/ustavi referenčni hod
+        // Če je ref. hod že aktiven, ga ustavi
+        if (refState != REF_IDLE) {
+          Serial.println("[bRefStart] STOP referenčnega hoda");
+          
+          // Ustavi motor
+          outputs.stopSpindle();
+          refState = REF_IDLE;
+          
+          display.setText("bRefStart", "START");
+          display.setText("tStatus_pg5", "Referenčni hod ustavljen");
+          
+          // Preveri kot za ponovno omogočitev gumba
+          float currentAngle = angleSensor.getCalibratedAngle();
+          bool angleInRange = (currentAngle >= 0.0 && currentAngle <= 30.0);
+          display.setButtonState("bRefStart", angleInRange);
+          break;
         }
+        
+        // Sicer začni nov ref. hod - preveri kot
+        float currentAngle = angleSensor.getCalibratedAngle();
+        if (currentAngle < 0.0 || currentAngle > 30.0) {
+          Serial.print("[bRefStart] NAPAKA: Kot izven mej! Trenutni: ");
+          Serial.print(currentAngle, 1);
+          Serial.println("° (zahtevano: 0-30°)");
+          display.setText("tStatus_pg5", "NAPAKA: Pozicioniraj vreteno med 0-30°!");
+          break;
+        }
+        
+        // Vse OK - začni referenčni hod
+        Serial.println("[bRefStart] Začetek referenčnega hoda");
+        startReferenceRun();
+        display.setText("bRefStart", "STOP");
         break;
+      }
         
       default:
         Serial.print("Neznan gumb ID na page5: ");
@@ -435,8 +521,8 @@ void handleTouchPress(uint8_t componentId) {
           angleSettingMode = ANGLE_SET_START;
           tempAngleStart = angleSensor.getCalibratedAngle();
           Serial.println("[bNastaviKote] Nastavljanje ZAČETNEGA kota - uporabite tipke S42(Gor)/S41(Dol)");
-          display.setText("bNastaviKote", "Zacetni");
-          updatePage1AngleDisplay();
+          display.setText("bNastaviKote", "ZACETNI");
+          updatePage7AngleDisplay();
         }
         else if (angleSettingMode == ANGLE_SET_START) {
           // Shrani začetni kot in začni nastavitev končnega
@@ -448,8 +534,8 @@ void handleTouchPress(uint8_t componentId) {
           Serial.print(tempAngleStart, 1);
           Serial.println("°");
           Serial.println("[bNastaviKote] Nastavljanje KONČNEGA kota - uporabite tipke S42(Gor)/S41(Dol)");
-          display.setText("bNastaviKote", "Koncni");
-          updatePage1AngleDisplay();
+          display.setText("bNastaviKote", "KONČNI");
+          updatePage7AngleDisplay();
           display.setButtonState("bSave", true);
         }
         else if (angleSettingMode == ANGLE_SET_STOP) {
@@ -465,7 +551,7 @@ void handleTouchPress(uint8_t componentId) {
             Serial.print(tempAngleStop, 1);
             Serial.println("°");
             angleSettingMode = ANGLE_IDLE;
-            display.setText("bNastaviKote", "Nastavi");
+            display.setText("bNastaviKote", "NASTAVI");
             return;
           }
           
@@ -502,35 +588,13 @@ void handleTouchPress(uint8_t componentId) {
           Serial.println("°");
           Serial.println("[bNastaviKote] Nastavitev končana - pritisnite bSave za shranitev");
           display.setText("bNastaviKote", "Nastavi");
-          updatePage1AngleDisplay();
+          updatePage7AngleDisplay();
         }
         break;
         
-      case 8:   // bSave - shrani kote
-        savedAngleStart = tempAngleStart;
-        savedAngleStop = tempAngleStop;
-        saveAnglesToPreferences();
-        anglesConfigured = true;
-        anglesChanged = false;
-        
-        Serial.println("[bSave] Koti shranjeni v NVS");
-        Serial.print("  Start: ");
-        Serial.print(savedAngleStart, 1);
-        Serial.println("°");
-        Serial.print("  Stop: ");
-        Serial.print(savedAngleStop, 1);
-        Serial.println("°");
-        
-        // Posodobi globalne spremenljivke na pgModeOFF (format × 10)
-        display.setNumber("pgModeOFF.gStartAngle", (int32_t)(savedAngleStart * 10));
-        display.setNumber("pgModeOFF.gStopAngle", (int32_t)(savedAngleStop * 10));
-        
-        // Deaktiviraj bSave
-        display.setButtonState("bSave", false);
-        angleSettingMode = ANGLE_IDLE;
-        updateBNastaviKoteText();
-        break;
-        
+      // bSave (id=8) ne pošilja press eventa - pošilja vrednosti kotov (#ID5:, #ID6:)
+      // Obdelava je v handleStringData
+      
       default:
         Serial.print("Neznan gumb ID na page7: ");
         Serial.println(componentId);
@@ -725,7 +789,7 @@ void loop() {
     // Posodobi če: 1) Sprememba >1.0° ALI 2) Vsake 10s (backup)
     if (abs(currentAngle - lastDisplayedAngle) > 1.0 || 
         (currentMillis - lastAngleUpdate > 10000)) {
-      display.setNumber("xAngle", (int32_t)(currentAngle * 10));
+      setXFloatValue("xAngle", currentAngle);  // Uporabi helper za pravilno nastavitev vvs0
       lastDisplayedAngle = currentAngle;
       lastAngleUpdate = currentMillis;
     }
@@ -845,6 +909,13 @@ void loop() {
     
     // Preveri pogoje za bStart in posodobi tStatus_pg3
     updateAutoModeReadiness();
+    
+    // Posodobi tekst gumba bStart glede na stanje cikla
+    if (autoCycle.isRunning()) {
+      display.setText("bStart", "STOP");
+    } else {
+      display.setText("bStart", "START");
+    }
   }
   
   // Če smo na page7 (pgAngle) in nastavljamo kote, posodabljaj prikaz v realnem času
@@ -864,7 +935,7 @@ void loop() {
         display.setButtonState("bSave", true);
       }
     }
-    updatePage1AngleDisplay();
+    updatePage7AngleDisplay();
   }
   
   // Če smo na page5 (pgRef) in izvajamo referenčni hod, posodabljaj
@@ -878,6 +949,20 @@ void loop() {
         lastTimeUpdate = currentMillis;
         unsigned long elapsedSeconds = (currentMillis - refStartTime) / 1000;
         display.setNumber("nCicleTime", (int32_t)elapsedSeconds);
+      }
+    } else if (refState == REF_IDLE) {
+      // Če ref. hod ni aktiven, posodabljaj omogočenost bRefStart glede na kot
+      static unsigned long lastRefButtonUpdate = 0;
+      if (currentMillis - lastRefButtonUpdate >= 500) {
+        lastRefButtonUpdate = currentMillis;
+        float currentAngle = angleSensor.getCalibratedAngle();
+        bool angleInRange = (currentAngle >= 0.0 && currentAngle <= 30.0);
+        display.setButtonState("bRefStart", angleInRange);
+        
+        // Posodobi status če je izven mej
+        if (!angleInRange) {
+          display.setText("tStatus_pg5", "NAPAKA: Pozicioniraj vreteno med 0-30°!");
+        }
       }
     }
   }
@@ -1312,11 +1397,99 @@ uint8_t speedToPWM(uint8_t percent) {
   return pwm;
 }
 
-void updatePage1AngleDisplay() {
+void setXFloatValue(const char* objName, float value) {
+  // Helper funkcija za pošiljanje xFloat vrednosti z avtomatskim nastavitvijo vvs0
+  // vvs0 določa število številk pred decimalno vejico, da se izognemo vodilnim ničlam
+  
+  int32_t intValue = (int32_t)(value * 10);  // xFloat format (*10)
+  
+  // Določi vvs0 glede na velikost vrednosti
+  uint8_t vvs0 = 1;  // Privzeto 1 števka (0-9.9)
+  
+  if (intValue >= 100 && intValue < 1000) {
+    vvs0 = 2;  // 2 števki (10.0-99.9)
+  } else if (intValue >= 1000) {
+    vvs0 = 3;  // 3 števke (100.0-999.9)
+  }
+  
+  // Pošlji vvs0 atribut
+  char cmd[64];
+  snprintf(cmd, sizeof(cmd), "%s.vvs0=%d", objName, vvs0);
+  display.sendRawCommand(cmd);
+  
+  // Pošlji vrednost
+  display.setNumber(objName, intValue);
+  
+  Serial.print("[xFloat] ");
+  Serial.print(objName);
+  Serial.print(" = ");
+  Serial.print(value, 1);
+  Serial.print("° (vvs0=");
+  Serial.print(vvs0);
+  Serial.println(")");
+}
+
+void processSavedAngles() {
+  // Obdelaj prejete kote iz ID5 in ID6
+  float start = receivedID6 / 10.0;  // ID6 = xStartAngle
+  float stop = receivedID5 / 10.0;    // ID5 = xStopAngle
+  
+  // Resetiraj začasne spremenljivke
+  receivedID5 = -1;
+  receivedID6 = -1;
+  
+  Serial.print("[ANGLE] Obdelava shranjenih kotov: Start=");
+  Serial.print(start, 1);
+  Serial.print("°, Stop=");
+  Serial.print(stop, 1);
+  Serial.println("°");
+  
+  // Validacija: Začetni kot mora biti večji od končnega
+  if (start <= stop) {
+    Serial.println("[ANGLE] NAPAKA: Začetni kot mora biti večji od končnega!");
+    display.setText("tStatus_pg7", "NAPAKA: Začetni > Končni!");
+    return;
+  }
+  
+  // Koti uspešno validirani - shrani v globalne spremenljivke
+  savedAngleStart = start;
+  savedAngleStop = stop;
+  anglesConfigured = true;
+  anglesChanged = false;
+  
+  Serial.println("[ANGLE] Koti shranjeni v globalne spremenljivke");
+  
+  // Shrani v NVS preferences
+  saveAnglesToPreferences();
+  Serial.println("[ANGLE] Koti shranjeni v NVS");
+  
+  // Posodobi globalne spremenljivke na pgModeOFF (format × 10)
+  setXFloatValue("pgModeOFF.xStartAngle", savedAngleStart);
+  setXFloatValue("pgModeOFF.xStopAngle", savedAngleStop);
+  display.setNumber("pgModeOFF.gStartAngle", (int32_t)(savedAngleStart * 10));
+  display.setNumber("pgModeOFF.gStopAngle", (int32_t)(savedAngleStop * 10));
+  
+  // Posodobi prikaz na page7 (če smo še vedno na page7)
+  if (currentPage == 7) {
+    tempAngleStart = savedAngleStart;
+    tempAngleStop = savedAngleStop;
+    updatePage7AngleDisplay();
+    
+    // Deaktiviraj bSave in resetiraj način
+    display.setButtonState("bSave", false);
+    angleSettingMode = ANGLE_IDLE;
+    updateBNastaviKoteText();
+    
+    // Status
+    display.setText("tStatus_pg7", "Koti shranjeni!");
+  }
+}
+
+void updatePage7AngleDisplay() {
   // Posodobi prikaz kotov na page7 (pgAngle)
-  // xStartAngle (id=6), xStopAngle (id=5) - Xfloat format (*10)
-  display.setNumber("xStartAngle", (int32_t)(tempAngleStart * 10));
-  display.setNumber("xStopAngle", (int32_t)(tempAngleStop * 10));
+  // xStartAngle (id=6), xStopAngle (id=5) - Xfloat format z avtomatskim vvs0
+  setXFloatValue("xStartAngle", tempAngleStart);
+  setXFloatValue("xStopAngle", tempAngleStop);
 }
 
 void updateBNastaviKoteText() {
@@ -1396,8 +1569,9 @@ void startReferenceRun() {
   refState = REF_FIND_MIN_DOWN;
   Serial.println("Faza 1: Iskanje najnižje točke - vreteno gre navzdol do S43 aktiven...");
   
-  // Začni premik navzdol
-  outputs.moveSpindleDown(SPINDLE_SPEED_MEDIUM);
+  // Začni premik navzdol s hitrostjo speedSredina
+  uint8_t pwmSpeed = speedToPWM(speedSredina);
+  outputs.moveSpindleDown(pwmSpeed);
   
   // Posodobi display page5 (pgRef)
   display.setNumber("nObrati", 0);
@@ -1409,7 +1583,8 @@ void startReferenceRun() {
 void updateReferenceRun() {
   float currentAngle = angleSensor.getCalibratedAngle();
   
-  // xAngle se že posodablja v loop() za page5
+  // Posodobi nObrati med izvajanjem
+  display.setNumber("nObrati", (int32_t)refRevolutions);
   
   // === FAZA 1A: ISKANJE NAJNIŽJE TOČKE (DOL DO S43) ===
   if (refState == REF_FIND_MIN_DOWN) {
@@ -1425,7 +1600,8 @@ void updateReferenceRun() {
       // Obrni smer - začni iti gor
       refState = REF_FIND_MIN_UP;
       Serial.println("Faza 1B: Vreteno gre gor - čakam S43 neaktiven + 0.5°...");
-      outputs.moveSpindleUp(SPINDLE_SPEED_MEDIUM);
+      uint8_t pwmSpeed = speedToPWM(speedSredina);
+      outputs.moveSpindleUp(pwmSpeed);
     }
   }
   
@@ -1548,8 +1724,12 @@ void finishReferenceRun() {
   // nCicleTime - Number format (sekunde)
   display.setNumber("nCicleTime", (int32_t)elapsedTime);
   
-  // xRevPerAngle - Xfloat format (*10)
-  display.setNumber("xRevPerAngle", (int32_t)(revPerAngle * 10));
+  // xRevPerAngle - Xfloat format z avtomatskim vvs0
+  setXFloatValue("xRevPerAngle", revPerAngle);
+  
+  // xMinAngle in xMaxAngle - Xfloat format
+  setXFloatValue("xMinAngle", measuredMinAngle);
+  setXFloatValue("xMaxAngle", measuredMaxAngle);
   
   // Shrani v globalne spremenljivke na pgModeOFF (format × 10)
   display.setNumber("pgModeOFF.gMinAngle", (int32_t)(measuredMinAngle * 10));
@@ -1604,6 +1784,10 @@ void handlePageChange(uint8_t newPage) {
     case 1: { // pgModeOFF
       Serial.println("  -> pgModeOFF (osnovna stran)");
       
+      // Najprej pošlji trenutni kot xAngle (ostala xFloat polja se naložijo iz globalnih spr.)
+      float currentAngle = angleSensor.getCalibratedAngle();
+      setXFloatValue("xAngle", currentAngle);
+      
       // Preveri pogoje in nastavi statusno sporočilo
       String statusMsg = "";
       
@@ -1635,8 +1819,13 @@ void handlePageChange(uint8_t newPage) {
       break;
     }
       
-    case 2:  // pgModeMAN
+    case 2: { // pgModeMAN
       Serial.println("  -> pgModeMAN (ročni način)");
+      
+      // Najprej pošlji trenutni kot xAngle (ostala xFloat polja se naložijo iz globalnih spr.)
+      float currentAngle = angleSensor.getCalibratedAngle();
+      setXFloatValue("xAngle", currentAngle);
+      
       // Naloži hitrost iz preferences
       display.setProgress("hRocno", speedRocno);
       
@@ -1647,44 +1836,92 @@ void handlePageChange(uint8_t newPage) {
         display.setText("tStatus_pg2", "Ročni način - uporabite tipke ali gumbe");
       }
       break;
+    }
       
-    case 3:  // pgModeAUTO
+    case 3: { // pgModeAUTO
       Serial.println("  -> pgModeAUTO (avtomatski način)");
-      // Naloži hitrost
-      display.setNumber("nSpeed", (int32_t)(speedZacetni));  // Number - brez *10
+      
+      // Najprej pošlji trenutni kot xAngle
+      float currentAngle = angleSensor.getCalibratedAngle();
+      setXFloatValue("xAngle", currentAngle);
+      
+      // Naloži hitrost - uporablja se speedSredina
+      display.setNumber("nSpeed", (int32_t)(speedSredina));  // Number - brez *10
+      
+      // Inicializiraj tCikli - format "izvedeni/nastavljeni"
+      S2Cycles cycles = inputs.getS2Cycles();
+      char cikliText[20];
+      if (cycles == CYCLES_CONTINUOUS) {
+        sprintf(cikliText, "%d/∞", autoCycle.getCompletedCycles());
+      } else {
+        sprintf(cikliText, "%d/%d", autoCycle.getCompletedCycles(), (int)cycles);
+      }
+      display.setText("tCikli", cikliText);
+      
+      // Nastavi tekst gumba bStart glede na stanje cikla
+      if (autoCycle.isRunning()) {
+        display.setText("bStart", "STOP");
+      } else {
+        display.setText("bStart", "START");
+      }
       
       // Preveri pogoje in nastavi statusno sporočilo ter bStart omogočenost
       updateAutoModeReadiness();
       break;
+    }
       
     case 4:  // pgSettings
       Serial.println("  -> pgSettings (menu nastavitev)");
       // Samo navigacijski menu, ni aktivnih elementov
       break;
       
-    case 5:  // pgRef
+    case 5: { // pgRef
       Serial.println("  -> pgRef (referenčni hod)");
-      // Resetiraj stanje referenčnega hoda
-      refState = REF_IDLE;
+      
+      // Najprej pošlji trenutni kot xAngle
+      float currentAngle = angleSensor.getCalibratedAngle();
+      setXFloatValue("xAngle", currentAngle);
+      
+      // Resetiraj stanje referenčnega hoda (samo če ni že aktiven)
+      if (refState == REF_IDLE) {
+        refState = REF_IDLE;
+      }
       
       // Naloži globalne spremenljivke iz pgModeOFF (xMinAngle, xMaxAngle)
       // Te se avtomatsko nalagajo iz globalnih spremenljivk v Nextion GUI
+      setXFloatValue("xMinAngle", calibratedMinAngle);
+      setXFloatValue("xMaxAngle", calibratedMaxAngle);
       
       // Naloži hitrost iz preferences (speedSredina)
       display.setNumber("nSpeed", (int32_t)(speedSredina));  // Number - brez *10
       
-      // Resetiraj prikaze
-      display.setNumber("nObrati", 0);
-      display.setNumber("nCicleTime", 0);
-      display.setNumber("xRevPerAngle", 0);  // Xfloat format
+      // Resetiraj prikaze (samo če ref. hod ni aktiven)
+      if (refState == REF_IDLE) {
+        display.setNumber("nObrati", 0);
+        display.setNumber("nCicleTime", 0);
+        setXFloatValue("xRevPerAngle", revPerAngle);  // Prikaži trenutno vrednost
+      }
       
-      // Statusno sporočilo
-      if (!anglesCalibrated) {
-        display.setText("tStatus_pg5", "Pritisnite START za referenčni hod");
+      // Preveri ali je kot v mejah (0-30°) za omogočitev bRefStart
+      bool angleInRange = (currentAngle >= 0.0 && currentAngle <= 30.0);
+      display.setButtonState("bRefStart", angleInRange && refState == REF_IDLE);
+      
+      // Nastavi tekst gumba bRefStart glede na stanje
+      if (refState == REF_IDLE) {
+        display.setText("bRefStart", "START");
+        // Statusno sporočilo
+        if (!angleInRange) {
+          display.setText("tStatus_pg5", "NAPAKA: Pozicioniraj vreteno med 0-30°!");
+        } else if (!anglesCalibrated) {
+          display.setText("tStatus_pg5", "Pritisnite START za referenčni hod");
+        } else {
+          display.setText("tStatus_pg5", "OPOZORILO: Referenčni hod bo prepisal obstoječe!");
+        }
       } else {
-        display.setText("tStatus_pg5", "OPOZORILO: Referenčni hod bo prepisu obstoječe!");
+        display.setText("bRefStart", "STOP");
       }
       break;
+    }
       
     case 6:  // pgSpeed
       Serial.println("  -> pgSpeed (hitrosti)");
@@ -1692,18 +1929,29 @@ void handlePageChange(uint8_t newPage) {
       display.setProgress("hZacetni", speedZacetni);
       display.setProgress("hSredina", speedSredina);
       display.setProgress("hKoncni", speedKoncni);
-      display.setProgress("hRocno", speedRocno);
+      //display.setProgress("hRocno", speedRocno);
       break;
       
-    case 7:  // pgAngle
+    case 7: { // pgAngle
       Serial.println("  -> pgAngle (nastavitev kotov)");
+      
+      // Najprej pošlji trenutni kot xAngle
+      float currentAngle = angleSensor.getCalibratedAngle();
+      setXFloatValue("xAngle", currentAngle);
+      
+      // xMinAngle, xMaxAngle, xStartAngle, xStopAngle se naložijo avtomatsko iz globalnih spr.
+      
       // Inicializiraj začasne kote
       tempAngleStart = savedAngleStart;
       tempAngleStop = savedAngleStop;
       anglesChanged = false;
       angleSettingMode = ANGLE_IDLE;
-      updatePage1AngleDisplay();
+      updatePage7AngleDisplay();
       display.setButtonState("bSave", false);
+      
+      // Status
+      display.setText("tStatus_pg7", "Uporabite gumb [Nastavi] za nastavitev kotov");
       break;
+    }
   }
 }

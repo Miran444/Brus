@@ -90,9 +90,10 @@ uint32_t lastRevCount = 0;
 #define ANGLE_TOLERANCE 0.5  // Toleranca 0.5° od S43/S46 stikal
 
 // Deklaracije funkcij
-void handleNextionEvents();
 void handleTouchPress(uint8_t componentId);
 void handleTouchRelease(uint8_t componentId);
+void handlePageChange(uint8_t newPage);
+void handleStringData(const String& data);
 void loadAnglesFromPreferences();
 void saveAnglesToPreferences();
 void clearAnglesFromPreferences();
@@ -104,7 +105,28 @@ void finishReferenceRun();
 void updatePage1AngleDisplay();
 void updateBNastaviKoteText();
 void updateAutoModeReadiness();
-void handlePageChange(uint8_t newPage);  // Nova funkcija za PAGE: event
+
+// ===== NEXTION CALLBACK FUNKCIJE =====
+void onNextionTouch(uint8_t pageId, uint8_t componentId, bool isPress) {
+  if (isPress) {
+    handleTouchPress(componentId);
+  } else {
+    handleTouchRelease(componentId);
+  }
+}
+
+void onNextionPageChange(uint8_t pageId) {
+  handlePageChange(pageId);
+}
+
+void onNextionString(const String& data) {
+  handleStringData(data);
+}
+
+void onNextionNumeric(int32_t value) {
+  Serial.print("[NEXTION] Numeric value: ");
+  Serial.println(value);
+}
 
 void setup() {
   // Inicializacija Serial komunikacije
@@ -139,6 +161,13 @@ void setup() {
   // Inicializacija Nextion displaya
   display.begin();
   
+  // Registriraj callback funkcije
+  display.onTouch(onNextionTouch);
+  display.onPageChange(onNextionPageChange);
+  display.onString(onNextionString);
+  display.onNumeric(onNextionNumeric);
+  Serial.println("[MAIN] Nextion callbacks registered");
+  
   // Nastavi začetno stanje gumbov
   display.setBrusState(false);
   display.setPnevState(false);
@@ -148,13 +177,13 @@ void setup() {
   
   // Nastavi začetno stran - pgIntro (page0)
   // ZAČASNO IZKLJUČENO zaradi debugginga - gremo direktno na page1
-  display.showPage(1);
-  currentPage = 1;
-  introShown = false;
-  Serial.println("Začetna stran: pgModeOFF (page1)");
+  // display.showPage(1);
+  // currentPage = 1;
+  // introShown = false;
+  // Serial.println("Začetna stran: pgModeOFF (page1)");
   
   Serial.println("Sistem pripravljen!");
-  Serial.println("Intro stran prikazana - preklop na pgModeOFF čez 5s...");
+  // Serial.println("Intro stran prikazana - preklop na pgModeOFF čez 5s...");
   
   // SIMULATOR MODE: če AS5600 ni prisoten
   if (!angleSensor.isSensorPresent()) {
@@ -173,180 +202,109 @@ void setup() {
   Serial.println();
 }
 
-// ===== OBDELAVA NEXTION TOUCH EVENTS =====
-void handleNextionEvents() {
-  int eventsProcessed = 0;
-  int terminatorsCleared = 0;
-  const int MAX_EVENTS = 20;
-  const int MAX_TERMINATORS = 100;  // Max 0xFF da ne zaciklamo
+// ===== OBDELAVA NEXTION STRING EVENTS =====
+void handleStringData(const String& data) {
+  if (data.length() == 0) return;
   
-  while (display.available() && eventsProcessed < MAX_EVENTS) {
-    // Preberi prvi byte da ugotovimo tip dogodka
-    uint8_t eventType = Serial2.peek();
-    
-    // RAW HEX DUMP - prikaži VSE byte-e v realnem času
-    Serial.print("RX: 0x");
-    if (eventType < 0x10) Serial.print("0"); // Vodilna 0
-    Serial.print(eventType, HEX);
-    
-    // 0xFF so command terminatorji
-    if (eventType == 0xFF) {
-      Serial.println(" (terminator)");
-      Serial2.read();
-      terminatorsCleared++;
-      if (terminatorsCleared >= MAX_TERMINATORS) {
-        Serial.println("[!] Preveč terminatorjev, izhod");
-        break;
-      }
-      continue;
-    }
-    
-    // Prikaži tip dogodka
-    Serial.print(" -> ");
-    
-    eventsProcessed++;
-    
-    if (eventType == 0x65) {
-      // Touch Press Event
-      Serial.println("- Touch Press");
-      uint8_t pressId = display.readTouchEvent();
-      if (pressId > 0) {
-        handleTouchPress(pressId);
-      }
-    } 
-    else if (eventType == 0x66) {
-      // Touch Release Event
-      Serial.println("- Touch Release");
-      uint8_t releaseId = display.readTouchReleaseEvent();
-      if (releaseId > 0) {
-        handleTouchRelease(releaseId);
-      }
-    }
-    else if (eventType == 0x70) {
-      // String Return Event
-      Serial.println("- String Return");
-      String data = display.readString();
-      Serial.print("[NEXTION STRING] '");
-      Serial.print(data);
-      Serial.print("' (");
-      Serial.print(data.length());
-      Serial.print(" bytes) HEX: ");
-      for (int i = 0; i < data.length(); i++) {
-        Serial.print(data[i], HEX);
-        Serial.print(" ");
-      }
-      Serial.println();
-      
-      if (data.length() > 0) {
-        // Preveri če je PAGE: event
-        if (data.startsWith("PAGE:")) {
-          // Format: "PAGE:X" kjer je X hex številka strani (0-7)
-          String pageHex = data.substring(5);
-          uint8_t newPage = (uint8_t)strtol(pageHex.c_str(), NULL, 16);
-          Serial.print("PAGE event: ");
-          Serial.println(newPage);
-          handlePageChange(newPage);
-        }
-        // Preveri če je ID14: event (hRocno slider na page2)
-        else if (data.startsWith("ID14:")) {
-          // Format: "ID14:x" kjer je x vrednost 50-100
-          String valueStr = data.substring(5);
-          uint8_t value = valueStr.toInt();
-          
-          // Omejitev na 50-100%
-          if (value < 50) value = 50;
-          if (value > 100) value = 100;
-          
-          speedRocno = value;
-          Serial.print("[hRocno] Hitrost ročno: ");
-          Serial.print(speedRocno);
-          Serial.println("%");
-          saveSpeedsToPreferences();
-        }
-        // Preveri če je ID2: event (hZacetni slider na page6)
-        else if (data.startsWith("ID2:")) {
-          String valueStr = data.substring(4);
-          uint8_t value = valueStr.toInt();
-          if (value < 50) value = 50;
-          if (value > 100) value = 100;
-          speedZacetni = value;
-          Serial.print("[hZacetni] Hitrost začetni: ");
-          Serial.print(speedZacetni);
-          Serial.println("%");
-          saveSpeedsToPreferences();
-        }
-        // Preveri če je ID6: event (hSredina slider na page6)
-        else if (data.startsWith("ID6:")) {
-          String valueStr = data.substring(4);
-          uint8_t value = valueStr.toInt();
-          if (value < 50) value = 50;
-          if (value > 100) value = 100;
-          speedSredina = value;
-          Serial.print("[hSredina] Hitrost sredina: ");
-          Serial.print(speedSredina);
-          Serial.println("%");
-          saveSpeedsToPreferences();
-        }
-        // Preveri če je ID8: event (hKoncni slider na page6)
-        else if (data.startsWith("ID8:")) {
-          String valueStr = data.substring(4);
-          uint8_t value = valueStr.toInt();
-          if (value < 50) value = 50;
-          if (value > 100) value = 100;
-          speedKoncni = value;
-          Serial.print("[hKoncni] Hitrost končni: ");
-          Serial.print(speedKoncni);
-          Serial.println("%");
-          saveSpeedsToPreferences();
-        }
-        // Parsing kotov iz page7 (pgAngle)
-        else {
-          float start, stop;
-          if (display.parseAngleSettings(data, start, stop)) {
-            // Validacija: Začetni kot mora biti večji od končnega
-            if (start <= stop) {
-              Serial.println("NAPAKA: Začetni kot mora biti večji od končnega!");
-              Serial.print("  Start: ");
-              Serial.print(start, 1);
-              Serial.print("°, Stop: ");
-              Serial.print(stop, 1);
-              Serial.println("°");
-              display.setText("tStatus_pg1", "NAPAKA: Začetni kot mora biti večji od končnega!");
-              return;
-            }
-            
-            // Koti uspešno parsirani iz xStartAngle in xEndAngle
-            tempAngleStart = start;
-            tempAngleStop = stop;
-            anglesChanged = true;
-            
-            Serial.print("Koti nastavljeni ročno: Start=");
-            Serial.print(tempAngleStart, 1);
-            Serial.print("°, Stop=");
-            Serial.print(tempAngleStop, 1);
-            Serial.println("°");
-            display.setText("tStatus_pg1", "Koti OK - pritisnite Save!");
-            
-            // Posodobi prikaz
-            updatePage1AngleDisplay();
-            
-            // Aktiviraj bSave gumb
-            display.setButtonState("bSave", true);
-          }
-        }
-      }
-    }
-    
-    yield();  // Feed watchdog
+  // Preveri če je PAGE: event
+  if (data.startsWith("PAGE:")) {
+    // Format: "PAGE:X" kjer je X hex številka strani (0-7)
+    String pageHex = data.substring(5);
+    uint8_t newPage = (uint8_t)strtol(pageHex.c_str(), NULL, 16);
+    Serial.print("[PAGE] Event: ");
+    Serial.println(newPage);
+    handlePageChange(newPage);
+    return;
   }
   
-  // Počisti buffer če je še poln (tišje - brez opozorila)
-  if (eventsProcessed >= MAX_EVENTS && display.available()) {
-    int cleared = 0;
-    while (display.available() && Serial2.available() && cleared < 50) {
-      Serial2.read();
-      cleared++;
+  // Preveri če je ID14: event (hRocno slider na page2)
+  if (data.startsWith("ID14:")) {
+    String valueStr = data.substring(5);
+    uint8_t value = valueStr.toInt();
+    if (value < 50) value = 50;
+    if (value > 100) value = 100;
+    speedRocno = value;
+    Serial.print("[hRocno] Hitrost ročno: ");
+    Serial.print(speedRocno);
+    Serial.println("%");
+    saveSpeedsToPreferences();
+    return;
+  }
+  
+  // Preveri če je ID2: event (hZacetni slider na page6)
+  if (data.startsWith("ID2:")) {
+    String valueStr = data.substring(4);
+    uint8_t value = valueStr.toInt();
+    if (value < 50) value = 50;
+    if (value > 100) value = 100;
+    speedZacetni = value;
+    Serial.print("[hZacetni] Hitrost začetni: ");
+    Serial.print(speedZacetni);
+    Serial.println("%");
+    saveSpeedsToPreferences();
+    return;
+  }
+  
+  // Preveri če je ID6: event (hSredina slider na page6)
+  if (data.startsWith("ID6:")) {
+    String valueStr = data.substring(4);
+    uint8_t value = valueStr.toInt();
+    if (value < 50) value = 50;
+    if (value > 100) value = 100;
+    speedSredina = value;
+    Serial.print("[hSredina] Hitrost sredina: ");
+    Serial.print(speedSredina);
+    Serial.println("%");
+    saveSpeedsToPreferences();
+    return;
+  }
+  
+  // Preveri če je ID8: event (hKoncni slider na page6)
+  if (data.startsWith("ID8:")) {
+    String valueStr = data.substring(4);
+    uint8_t value = valueStr.toInt();
+    if (value < 50) value = 50;
+    if (value > 100) value = 100;
+    speedKoncni = value;
+    Serial.print("[hKoncni] Hitrost končni: ");
+    Serial.print(speedKoncni);
+    Serial.println("%");
+    saveSpeedsToPreferences();
+    return;
+  }
+  
+  // Parsing kotov iz page7 (pgAngle) - format: "ID5:357;ID6:80"
+  float start, stop;
+  if (display.parseAngleSettings(data, start, stop)) {
+    // Validacija: Začetni kot mora biti večji od končnega
+    if (start <= stop) {
+      Serial.println("[ANGLE] NAPAKA: Začetni kot mora biti večji od končnega!");
+      Serial.print("  Start: ");
+      Serial.print(start, 1);
+      Serial.print("°, Stop: ");
+      Serial.print(stop, 1);
+      Serial.println("°");
+      display.setText("tStatus_pg1", "NAPAKA: Začetni > Končni!");
+      return;
     }
+    
+    // Koti uspešno parsirani
+    tempAngleStart = start;
+    tempAngleStop = stop;
+    anglesChanged = true;
+    
+    Serial.print("[ANGLE] Nastavljeni: Start=");
+    Serial.print(tempAngleStart, 1);
+    Serial.print("°, Stop=");
+    Serial.print(tempAngleStop, 1);
+    Serial.println("°");
+    display.setText("tStatus_pg1", "Koti OK - pritisnite Save!");
+    
+    // Posodobi prikaz
+    updatePage1AngleDisplay();
+    
+    // Aktiviraj bSave gumb
+    display.setButtonState("bSave", true);
   }
 }
 
@@ -924,11 +882,8 @@ void loop() {
     }
   }
   
-  // Posodobi Nextion display
+  // Posodobi Nextion display (vključuje obdelavo vseh dogodkov preko callbackov)
   display.update(currentMillis);
-  
-  // Obdelaj Touch Events iz Nextiona
-  handleNextionEvents();
   
   // Trenutni način delovanja
   S1Mode mode = inputs.getS1Mode();
@@ -1628,6 +1583,7 @@ void handlePageChange(uint8_t newPage) {
   Serial.println(newPage);
   
   currentPage = newPage;
+  display.setCurrentPage(newPage);  // Posodobi tudi v NextionDisplay
   
   // Posebna logika za vsako stran
   switch(newPage) {

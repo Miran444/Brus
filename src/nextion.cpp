@@ -3,6 +3,7 @@
 NextionDisplay::NextionDisplay() {
     serial = nullptr;
     lastUpdateTime = 0;
+    currentPage = 0;  // Začetna stran
     
     // Inicializacija bufferjev
     lastMode = "";
@@ -16,6 +17,18 @@ NextionDisplay::NextionDisplay() {
     lastSpindleSpeed = 255;
     lastAngleStart = -999.0;
     lastAngleStop = -999.0;
+    
+    // Callback funkcije
+    touchCallback = nullptr;
+    pageCallback = nullptr;
+    stringCallback = nullptr;
+    numericCallback = nullptr;
+    
+    // Buffer management
+    rxBufferIndex = 0;
+    lastRxTime = 0;
+    errorCount = 0;
+    eventsProcessed = 0;
 }
 
 void NextionDisplay::begin() {
@@ -25,17 +38,65 @@ void NextionDisplay::begin() {
     
     delay(500); // Počakaj da se Nextion inicializira
     
+    // Počisti buffer
+    clearBuffer();
+    
+    Serial.println("[NEXTION] Inicializiran na UART2");
+    Serial.print("[NEXTION] Baud: ");
+    Serial.println(NEXTION_BAUD);
+    
     // Reset Nextion display
+    Serial.println("[NEXTION] Pošiljam reset ukaz...");
     sendCommand("rest");
-    delay(100);
     
-    Serial.println("Nextion Display inicializiran na UART2");
+    // Počakaj na startup sekvenco: 0x00 0x00 0x00 0xFF 0xFF 0xFF 0x88 0xFF 0xFF 0xFF
+    Serial.println("[NEXTION] Čakam na startup sekvenco...");
+    unsigned long timeout = millis() + 3000;  // 3 sekunde timeout
+    bool startupReceived = false;
     
-    // Test komunikacije
-    sendCommand("page 0");  // Pojdi na stran 0
-    //setText("t0", "BRUS v1.0");
+    while (millis() < timeout) {
+        if (serial->available() >= 10) {
+            uint8_t buf[10];
+            serial->readBytes(buf, 10);
+            
+            // Preveri startup sekvenco
+            if (buf[0] == 0x00 && buf[1] == 0x00 && buf[2] == 0x00 &&
+                buf[3] == 0xFF && buf[4] == 0xFF && buf[5] == 0xFF &&
+                buf[6] == 0x88 && buf[7] == 0xFF && buf[8] == 0xFF && buf[9] == 0xFF) {
+                Serial.println("[NEXTION] ✓ Startup sekvenca prejeta (0x88)");
+                startupReceived = true;
+                break;
+            } else {
+                Serial.print("[NEXTION] Nepričakovani podatki: ");
+                for (int i = 0; i < 10; i++) {
+                    Serial.print("0x");
+                    if (buf[i] < 0x10) Serial.print("0");
+                    Serial.print(buf[i], HEX);
+                    Serial.print(" ");
+                }
+                Serial.println();
+            }
+        }
+        delay(10);
+    }
     
-    delay(100);
+    if (!startupReceived) {
+        Serial.println("[NEXTION] ✗ NAPAKA: Startup sekvenca ni prejeta!");
+        errorCount++;
+    } else {
+        Serial.println("[NEXTION] ✓ Startup uspešen");
+    }
+    
+    // PAGE eventi se obdelujejo preko callback sistema v handleStringData()
+    // Ne čakamo tukaj - pustimo da event handler prevzame nadzor
+    
+    resetStatistics();
+    
+    Serial.println("[NEXTION] ═══════════════════════════════");
+    Serial.print("[NEXTION] Inicializacija ");
+    Serial.println(startupReceived ? "USPEŠNA ✓" : "NEUSPEŠNA ✗");
+    Serial.println("[NEXTION] PAGE eventi preko callback sistema");
+    Serial.println("[NEXTION] ═══════════════════════════════");
 }
 
 void NextionDisplay::sendCommand(const char* cmd) {
@@ -48,6 +109,366 @@ void NextionDisplay::endCommand() {
     serial->write(0xFF);
     serial->write(0xFF);
     serial->write(0xFF);
+}
+
+// ===== BUFFER MANAGEMENT =====
+
+void NextionDisplay::clearBuffer() {
+    while (serial->available()) {
+        serial->read();
+        yield();
+    }
+    rxBufferIndex = 0;
+}
+
+void NextionDisplay::flushInvalidData() {
+    // Počisti buffer če vsebuje neznan format
+    int cleared = 0;
+    while (serial->available() && cleared < 50) {
+        uint8_t b = serial->read();
+        Serial.print("[NEXTION] Flush: 0x");
+        Serial.println(b, HEX);
+        cleared++;
+        yield();
+    }
+    if (cleared > 0) {
+        errorCount++;
+        Serial.print("[NEXTION] Flushed ");
+        Serial.print(cleared);
+        Serial.println(" invalid bytes");
+    }
+}
+
+// ===== EVENT PROCESSING =====
+
+bool NextionDisplay::readEvent() {
+    if (!serial->available()) {
+        return false;
+    }
+    
+    // Preberi tip dogodka
+    uint8_t eventType = serial->peek();
+    
+    // Terminator (0xFF) - počisti
+    if (eventType == 0xFF) {
+        serial->read();
+        return false;
+    }
+    
+    // Nov unified protokol: začetek z 0x23 ("#")
+    if (eventType == 0x23) {
+        return processUnifiedEvent();
+    }
+    
+    // Stari Nextion protokol (za backward compatibility)
+    return processEvent(eventType);
+}
+
+bool NextionDisplay::processUnifiedEvent() {
+    // Format: 0x23 [EVENT_NAME] [VALUE_BYTES] 0xFF 0xFF 0xFF
+    // Primer: 0x23 "PAGE:" 0x00 0xFF 0xFF 0xFF
+    
+    serial->read();  // Počisti 0x23
+    
+    // Preberi ime eventa (do ':')
+    String eventName = "";
+    unsigned long timeout = millis() + 1000;
+    
+    while (millis() < timeout) {
+        if (serial->available()) {
+            uint8_t c = serial->read();
+            
+            if (c == ':') {
+                eventName += (char)c;
+                break;  // Konec imena eventa
+            } else if (c == 0xFF) {
+                // Napaka - ne bi smeli dobiti terminatorja tukaj
+                Serial.println("[NEXTION] Unified event error: terminator before ':'");
+                return false;
+            } else {
+                eventName += (char)c;
+            }
+        }
+        yield();
+    }
+    
+    if (!eventName.endsWith(":")) {
+        Serial.print("[NEXTION] Unified event error: invalid event name '");
+        Serial.print(eventName);
+        Serial.println("'");
+        return false;
+    }
+    
+    // Preberi vrednost (max 4 byte do 0xFF)
+    uint8_t valueBytes[4] = {0, 0, 0, 0};
+    int valueCount = 0;
+    int ffCount = 0;
+    
+    timeout = millis() + 1000;
+    while (millis() < timeout && valueCount < 4) {
+        if (serial->available()) {
+            uint8_t c = serial->read();
+            
+            if (c == 0xFF) {
+                ffCount++;
+                if (ffCount >= 3) {
+                    break;  // Konec eventa
+                }
+            } else {
+                // Če smo že videli 0xFF ampak ni bilo 3x, to je napaka
+                if (ffCount > 0) {
+                    Serial.println("[NEXTION] Unified event error: invalid terminator sequence");
+                    return false;
+                }
+                valueBytes[valueCount++] = c;
+            }
+        }
+        yield();
+    }
+    
+    if (ffCount < 3) {
+        Serial.println("[NEXTION] Unified event error: incomplete terminator");
+        return false;
+    }
+    
+    // Debug izpis
+    Serial.print("[NEXTION] Unified event: '");
+    Serial.print(eventName);
+    Serial.print("' value bytes: ");
+    for (int i = 0; i < valueCount; i++) {
+        Serial.print("0x");
+        if (valueBytes[i] < 0x10) Serial.print("0");
+        Serial.print(valueBytes[i], HEX);
+        Serial.print(" ");
+    }
+    Serial.println();
+    
+    // Procesiranje glede na ime eventa
+    eventsProcessed++;
+    
+    if (eventName == "PAGE:") {
+        // PAGE event - vrednost je številka strani (1 byte)
+        if (valueCount >= 1) {
+            uint8_t pageId = valueBytes[0];
+            Serial.print("[NEXTION] PAGE event: ");
+            Serial.println(pageId);
+            
+            // Pošlji SAMO kot string (ne pageCallback) da se ne kliče 2x
+            // handleStringData že vsebuje logiko za PAGE eventi
+            String pageData = "PAGE:" + String(pageId);
+            if (stringCallback) {
+                stringCallback(pageData);
+            }
+            return true;
+        }
+    }
+    else if (eventName == "PRESS:") {
+        // Touch press - vrednost je component ID (1 byte)
+        if (valueCount >= 1) {
+            uint8_t componentId = valueBytes[0];
+            Serial.print("[NEXTION] Touch PRESS: component ");
+            Serial.println(componentId);
+            
+            if (touchCallback) {
+                touchCallback(currentPage, componentId, true);
+            }
+            return true;
+        }
+    }
+    else if (eventName == "RELEASE:") {
+        // Touch release - vrednost je component ID (1 byte)
+        if (valueCount >= 1) {
+            uint8_t componentId = valueBytes[0];
+            Serial.print("[NEXTION] Touch RELEASE: component ");
+            Serial.println(componentId);
+            
+            if (touchCallback) {
+                touchCallback(currentPage, componentId, false);
+            }
+            return true;
+        }
+    }
+    else if (eventName.startsWith("ID") && eventName.endsWith(":")) {
+        // Slider/Number event - format: "IDxx:" vrednost (1-4 byte)
+        String idStr = eventName.substring(2, eventName.length() - 1);  // Dobi številko med "ID" in ":"
+        
+        // Sestavi vrednost (little-endian če več bytev)
+        int32_t value = 0;
+        for (int i = 0; i < valueCount && i < 4; i++) {
+            value |= ((int32_t)valueBytes[i]) << (i * 8);
+        }
+        
+        Serial.print("[NEXTION] Slider/Value event ID");
+        Serial.print(idStr);
+        Serial.print(": ");
+        Serial.println(value);
+        
+        // Pošlji kot string v obstoječ format "IDxx:value"
+        String data = "ID" + idStr + ":" + String(value);
+        if (stringCallback) {
+            stringCallback(data);
+        }
+        return true;
+    }
+    else {
+        Serial.print("[NEXTION] Unknown unified event: '");
+        Serial.print(eventName);
+        Serial.println("'");
+    }
+    
+    return false;
+}
+
+bool NextionDisplay::processEvent(uint8_t eventType) {
+    bool success = false;
+    
+    switch (eventType) {
+        case NEXTION_EVENT_TOUCH_PRESS:
+        case NEXTION_EVENT_TOUCH_RELEASE: {
+            NextionTouchEvent event;
+            if (readTouchEventData(event)) {
+                eventsProcessed++;
+                if (touchCallback) {
+                    touchCallback(event.pageId, event.componentId, event.isPress);
+                }
+                success = true;
+            }
+            break;
+        }
+        
+        case NEXTION_EVENT_STRING: {
+            String data;
+            if (readStringEventData(data)) {
+                eventsProcessed++;
+                if (stringCallback) {
+                    stringCallback(data);
+                }
+                success = true;
+            }
+            break;
+        }
+        
+        case NEXTION_EVENT_NUMERIC: {
+            int32_t value;
+            if (readNumericEventData(value)) {
+                eventsProcessed++;
+                if (numericCallback) {
+                    numericCallback(value);
+                }
+                success = true;
+            }
+            break;
+        }
+        
+        default:
+            // Neznan tip dogodka
+            Serial.print("[NEXTION] Unknown event type: 0x");
+            Serial.println(eventType, HEX);
+            serial->read();  // Počisti prvi byte
+            errorCount++;
+            break;
+    }
+    
+    if (!success && eventType != 0xFF) {
+        errorCount++;
+        flushInvalidData();
+    }
+    
+    return success;
+}
+
+bool NextionDisplay::readTouchEventData(NextionTouchEvent& event) {
+    // Format: 0x65/0x66 [PageID] [ComponentID] [Event] 0xFF 0xFF 0xFF
+    if (serial->available() < 7) {
+        return false;
+    }
+    
+    uint8_t buffer[7];
+    if (serial->readBytes(buffer, 7) != 7) {
+        return false;
+    }
+    
+    // Validacija
+    if (buffer[4] != 0xFF || buffer[5] != 0xFF || buffer[6] != 0xFF) {
+        Serial.println("[NEXTION] Invalid touch event terminator");
+        return false;
+    }
+    
+    event.pageId = buffer[1];
+    event.componentId = buffer[2];
+    event.isPress = (buffer[0] == NEXTION_EVENT_TOUCH_PRESS);
+    
+    Serial.print("[NEXTION] Touch ");
+    Serial.print(event.isPress ? "Press" : "Release");
+    Serial.print(" - Page: ");
+    Serial.print(event.pageId);
+    Serial.print(", Component: ");
+    Serial.println(event.componentId);
+    
+    return true;
+}
+
+bool NextionDisplay::readStringEventData(String& data) {
+    // Format: 0x70 [ASCII data...] 0xFF 0xFF 0xFF
+    serial->read();  // Počisti 0x70
+    
+    data = "";
+    unsigned long timeout = millis() + 1000;
+    int ffCount = 0;
+    
+    while (millis() < timeout) {
+        if (serial->available()) {
+            uint8_t c = serial->read();
+            
+            if (c == 0xFF) {
+                ffCount++;
+                if (ffCount >= 3) {
+                    break;
+                }
+            } else {
+                ffCount = 0;
+                data += (char)c;
+            }
+        }
+        yield();
+    }
+    
+    if (ffCount < 3) {
+        Serial.println("[NEXTION] String event timeout");
+        return false;
+    }
+    
+    Serial.print("[NEXTION] String: '");
+    Serial.print(data);
+    Serial.println("'");
+    
+    return true;
+}
+
+bool NextionDisplay::readNumericEventData(int32_t& value) {
+    // Format: 0x71 [4 bytes little-endian] 0xFF 0xFF 0xFF
+    if (serial->available() < 8) {
+        return false;
+    }
+    
+    uint8_t buffer[8];
+    if (serial->readBytes(buffer, 8) != 8) {
+        return false;
+    }
+    
+    // Validacija
+    if (buffer[0] != 0x71 || buffer[5] != 0xFF || buffer[6] != 0xFF || buffer[7] != 0xFF) {
+        Serial.println("[NEXTION] Invalid numeric event format");
+        return false;
+    }
+    
+    // Little-endian 32-bit number
+    value = buffer[1] | (buffer[2] << 8) | (buffer[3] << 16) | (buffer[4] << 24);
+    
+    Serial.print("[NEXTION] Numeric: ");
+    Serial.println(value);
+    
+    return true;
 }
 
 void NextionDisplay::setText(const char* obj, const char* text) {
@@ -126,19 +547,14 @@ void NextionDisplay::enableManualButtons(bool enable) {
 // ===== POŠILJANJE PODATKOV =====
 
 void NextionDisplay::setMode(const char* mode) {
-    if (String(mode) != lastMode) {
-        setText("tMode", mode);  // Tekstovni objekt "tMode" v HMI
-        lastMode = String(mode);
-        
-        // Spremeni barvo glede na način
-        if (strcmp(mode, "AUTO") == 0) {
-            sendCommand("tMode.pco=2016");  // Zelena
-        } else if (strcmp(mode, "MANUAL") == 0) {
-            sendCommand("tMode.pco=1024");  // Modra
-        } else {
-            sendCommand("tMode.pco=33840"); // Rdeča
-        }
-    }
+    // OPOMBA: tMode objekt ne obstaja več na nobeni strani
+    // Mode se spreminja samo z stikalom S1, ki sproži preklop strani:
+    //   - MODE_OFF -> page1 (pgModeOFF)
+    //   - MODE_MANUAL -> page2 (pgModeMAN)  
+    //   - MODE_AUTO -> page3 (pgModeAUTO)
+    // Ta funkcija je ohranjena za backward compatibility, vendar ne dela ničesar
+    
+    lastMode = String(mode);  // Posodobi samo buffer
 }
 
 void NextionDisplay::setCycles(uint8_t current, uint8_t target) {
@@ -271,100 +687,54 @@ void NextionDisplay::setSpindleStatus(bool moving, bool directionUp, uint8_t spe
     // }
 }
 
-// ===== BRANJE DOGODKOV =====
+// ===== BRANJE DOGODKOV (deprecated - uporabi callback sistem) =====
 
 bool NextionDisplay::available() {
     return serial->available() > 2;  // Minimalno 3 bajti za validen event
 }
 
 uint8_t NextionDisplay::readTouchEvent() {
-    // Prebere Touch Press Event (0x65)
-    // Format: 0x65 0xPageID 0xComponentID 0x01 0xFF 0xFF 0xFF
-    
-    if (!available()) return 0;
-    
-    uint8_t buf[7];
-    size_t len = serial->readBytes(buf, 7);
-    
-    if (len == 7 && buf[0] == 0x65 && buf[3] == 0x01 && 
-        buf[4] == 0xFF && buf[5] == 0xFF && buf[6] == 0xFF) {
-        uint8_t pageId = buf[1];
-        uint8_t componentId = buf[2];
-        
-        Serial.print("Touch Press Event - Page: ");
-        Serial.print(pageId);
-        Serial.print(", Component ID: ");
-        Serial.println(componentId);
-        
-        return componentId;
+    // DEPRECATED - uporabi callback sistem z onTouch()
+    // Ohranjen za backward compatibility
+    NextionTouchEvent event;
+    if (readTouchEventData(event)) {
+        return event.componentId;
     }
-    
     return 0;
 }
 
 uint8_t NextionDisplay::readTouchReleaseEvent() {
-    // Prebere Touch Release Event (0x66)
-    // Format: 0x66 0xPageID 0xComponentID 0x00 0xFF 0xFF 0xFF
-    
-    if (!available()) return 0;
-    
-    uint8_t buf[7];
-    size_t len = serial->readBytes(buf, 7);
-    
-    if (len == 7 && buf[0] == 0x66 && buf[3] == 0x00 && 
-        buf[4] == 0xFF && buf[5] == 0xFF && buf[6] == 0xFF) {
-        uint8_t pageId = buf[1];
-        uint8_t componentId = buf[2];
-        
-        Serial.print("Touch Release Event - Page: ");
-        Serial.print(pageId);
-        Serial.print(", Component ID: ");
-        Serial.println(componentId);
-        
-        return componentId;
+    // DEPRECATED - uporabi callback sistem z onTouch()
+    // Ohranjen za backward compatibility
+    NextionTouchEvent event;
+    if (readTouchEventData(event)) {
+        return event.componentId;
     }
-    
     return 0;
 }
 
 String NextionDisplay::readString() {
-    // Prebere custom string iz Nextiona
-    // Format: ASCII znaki do 0xFF 0xFF 0xFF
-    String result = "";
-    unsigned long timeout = millis() + 1000;  // 1 sekunda timeout
-    int ffCount = 0;
-    
-    while (millis() < timeout) {
-        if (serial->available()) {
-            uint8_t c = serial->read();
-            
-            if (c == 0xFF) {
-                ffCount++;
-                if (ffCount >= 3) {
-                    break;  // Konec stringa
-                }
-            } else {
-                ffCount = 0;
-                result += (char)c;
-            }
-        }
-    }
-    
-    return result;
+    // DEPRECATED - uporabi callback sistem z onString()
+    // Ohranjen za backward compatibility
+    String data;
+    readStringEventData(data);
+    return data;
 }
 
 bool NextionDisplay::parseAngleSettings(String data, float &startAngle, float &endAngle) {
+    // DEPRECATED - parsiranje se sedaj izvaja v callback funkciji
+    // Ohranjen za backward compatibility
     // Parsira string formata "ID5:357;ID6:80"
     // ID5:357 = 35.7°, ID6:80 = 8.0°
     
-    Serial.print("Parsing string: ");
+    Serial.print("[NEXTION] Parsing angle string: ");
     Serial.println(data);
     
     int id5Pos = data.indexOf("ID5:");
     int id6Pos = data.indexOf("ID6:");
     
     if (id5Pos == -1 || id6Pos == -1) {
-        Serial.println("ERROR: Invalid format - missing ID5 or ID6");
+        Serial.println("[NEXTION] ERROR: Invalid format - missing ID5 or ID6");
         return false;
     }
     
@@ -372,7 +742,7 @@ bool NextionDisplay::parseAngleSettings(String data, float &startAngle, float &e
     int semicolonPos = data.indexOf(";", id5Pos);
     
     if (semicolonPos == -1) {
-        Serial.println("ERROR: Missing semicolon separator");
+        Serial.println("[NEXTION] ERROR: Missing semicolon separator");
         return false;
     }
     
@@ -390,7 +760,7 @@ bool NextionDisplay::parseAngleSettings(String data, float &startAngle, float &e
     startAngle = startVal / 10.0;
     endAngle = endVal / 10.0;
     
-    Serial.print("Parsed: Start=");
+    Serial.print("[NEXTION] Parsed: Start=");
     Serial.print(startAngle);
     Serial.print("°, End=");
     Serial.print(endAngle);
@@ -400,36 +770,76 @@ bool NextionDisplay::parseAngleSettings(String data, float &startAngle, float &e
 }
 
 void NextionDisplay::update(unsigned long currentMillis) {
-    // Periodična posodobitev - ne preobremeniti UART
-    if (currentMillis - lastUpdateTime < NEXTION_UPDATE_INTERVAL) {
-        return;
-    }
-    lastUpdateTime = currentMillis;
+    // Procesiranje dogodkov
+    const int MAX_EVENTS_PER_UPDATE = 10;
+    int eventsThisUpdate = 0;
     
-    // Preberi morebitne dogodke iz Nextiona (max 10 dogodkov na cikel)
-    int eventsProcessed = 0;
-    while (available() && eventsProcessed < 10) {
-        readTouchEvent();
-        eventsProcessed++;
-        yield();  // Feed watchdog
+    while (serial->available() && eventsThisUpdate < MAX_EVENTS_PER_UPDATE) {
+        if (readEvent()) {
+            eventsThisUpdate++;
+        }
+        yield();
     }
     
-    // Če je buffer še poln, izpiši opozorilo
-    if (eventsProcessed >= 10 && available()) {
-        Serial.println("[NEXTION] Buffer overflow - too many events!");
+    // Preveri health status
+    if (!isHealthy() && (currentMillis - lastUpdateTime) > 10000) {
+        Serial.print("[NEXTION] WARNING: Error count high: ");
+        Serial.println(errorCount);
+        lastUpdateTime = currentMillis;
     }
+}
+
+// ===== STATUS IN STATISTIKA =====
+
+void NextionDisplay::resetStatistics() {
+    errorCount = 0;
+    eventsProcessed = 0;
+    Serial.println("[NEXTION] Statistics reset");
+}
+
+bool NextionDisplay::isHealthy() const {
+    // Komunikacija je zdrava če:
+    // - Ni preveč napak (max 10% od vseh dogodkov)
+    // - Ali manj kot 100 napak absolut no
+    if (eventsProcessed == 0) {
+        return errorCount < 10;
+    }
+    
+    float errorRate = (float)errorCount / (float)(eventsProcessed + errorCount);
+    return errorRate < 0.1 && errorCount < 100;
+}
+
+void NextionDisplay::printDebugInfo() {
+    Serial.println("===== NEXTION DEBUG INFO =====");
+    Serial.print("Events processed: ");
+    Serial.println(eventsProcessed);
+    Serial.print("Errors: ");
+    Serial.println(errorCount);
+    Serial.print("Error rate: ");
+    if (eventsProcessed > 0) {
+        float errorRate = (float)errorCount / (float)(eventsProcessed + errorCount) * 100.0;
+        Serial.print(errorRate, 2);
+        Serial.println("%");
+    } else {
+        Serial.println("N/A");
+    }
+    Serial.print("Health status: ");
+    Serial.println(isHealthy() ? "OK" : "ERROR");
+    Serial.print("RX buffer available: ");
+    Serial.println(serial->available());
+    Serial.println("==============================");
 }
 
 // ===== DEBUG =====
 
 void NextionDisplay::test() {
-    Serial.println("Nextion test...");
+    Serial.println("[NEXTION] Running test...");
     
-    setText("t0", "TEST OK");
+    // setText("t0", "TEST OK");
+    // delay(500);
+    
+    // setNumber("n0", 123);
     delay(500);
     
-    setNumber("n0", 123);
-    delay(500);
-    
-    Serial.println("Nextion test končan");
+    Serial.println("[NEXTION] Test complete");
 }

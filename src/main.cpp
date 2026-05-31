@@ -63,8 +63,6 @@ float revPerAngle = 0.0;    // Število obratov na stopinjo (iz kalibracije)
 // page6: pgSpeed (hitrosti)
 // page7: pgAngle (koti)
 uint8_t currentPage = 0;  // Trenutna stran
-unsigned long introStartTime = 0;
-bool introShown = false;
 S1Mode lastS1Mode = MODE_OFF;
 
 // Page7 (pgAngle) - Nastavitev kotov
@@ -261,23 +259,8 @@ void setup() {
   analogReadResolution(12);  // 12-bit ADC (0-4095)
   Serial.println("Power monitoring inicializiran (GPIO1 - ADC1_0)");
   
-  // Preveri prisotnost napajanja iz usmernika
-  checkPowerPresence();
-  Serial.print("Začetno stanje napajanja: ");
-  if (powerPresent) {
-    float realVoltage = powerVoltage * 2.0;  // Delilnik napetosti 1:1
-    Serial.print("PRISOTNO | Napajalna napetost: ");
-    Serial.print(realVoltage, 2);
-    Serial.print(" V (ADC: ");
-    Serial.print(powerVoltage, 2);
-    Serial.println(" V)");
-  } else {
-    Serial.print("NI PRISOTNO | ADC napetost: ");
-    Serial.print(powerVoltage, 2);
-    Serial.println(" V)");
-    // Če napajanje ni prisotno, pojdi v safe mode
-    safeModeLoop();
-  }
+  // ===== INICIALIZACIJA KOMPONENT (VEDNO, NE GLEDE NA NAPAJANJE) =====
+  // Te komponente morajo biti inicializirane pred safe mode loop-om
   
   // Inicializacija izhodov (NAJPREJ - varno stanje)
   outputs.begin();
@@ -299,7 +282,46 @@ void setup() {
     Serial.println("NAPAKA: AS5600 senzor ni najden!");
   }
   
-  // Inicializacija Nextion displaya
+  // ===== PREVERI PRISOTNOST NAPAJANJA =====
+  checkPowerPresence();
+  Serial.print("Začetno stanje napajanja: ");
+  if (powerPresent) {
+    float realVoltage = powerVoltage * 2.0;  // Delilnik napetosti 1:1
+    Serial.print("PRISOTNO | Napajalna napetost: ");
+    Serial.print(realVoltage, 2);
+    Serial.print(" V (ADC: ");
+    Serial.print(powerVoltage, 2);
+    Serial.println(" V)");
+  } else {
+    Serial.print("NI PRISOTNO | ADC napetost: ");
+    Serial.print(powerVoltage, 2);
+    Serial.println(" V)");
+    // Če napajanje ni prisotno, pojdi v safe mode
+    safeModeLoop();
+    
+    // Po vrnitvi iz safe mode: display je že poslal startup sekvenco
+    // NE kličemo display.begin() (bi poslal nov reset ukaz)
+    // Samo počakamo na startup sekvenco in registriramo callbacke
+    display.waitForStartup();
+    
+    // Registriraj callback funkcije
+    display.onTouch(onNextionTouch);
+    display.onPageChange(onNextionPageChange);
+    display.onString(onNextionString);
+    display.onNumeric(onNextionNumeric);
+    Serial.println("[MAIN] Nextion callbacks registered");
+    
+    // NE nastavljaj gumbov tukaj - display je na page 0 (intro), gumbi so na page 1
+    // Stanje gumbov se bo nastavilo avtomatsko ko se display preklopi na page 1
+    
+    // Naloži shranjene kote iz NVS
+    loadAnglesFromPreferences();
+    
+    Serial.println("Sistem pripravljen po povrnitvi napajanja!");
+    return;  // Preskoči ostalo inicializacijo displaya (je že narejena)
+  }
+  
+  // ===== INICIALIZACIJA NEXTION DISPLAYA (normalno, s reset ukazom) =====
   display.begin();
   
   // Registriraj callback funkcije
@@ -309,10 +331,6 @@ void setup() {
   display.onNumeric(onNextionNumeric);
   Serial.println("[MAIN] Nextion callbacks registered");
   
-  // Nastavi začetno stanje gumbov
-  display.setBrusState(false);
-  display.setPnevState(false);
-  
   // Naloži shranjene kote iz NVS
   loadAnglesFromPreferences();
   
@@ -320,7 +338,6 @@ void setup() {
   // ZAČASNO IZKLJUČENO zaradi debugginga - gremo direktno na page1
   // display.showPage(1);
   // currentPage = 1;
-  // introShown = false;
   // Serial.println("Začetna stran: pgModeOFF (page1)");
   
   Serial.println("Sistem pripravljen!");
@@ -866,17 +883,35 @@ void loop() {
     // Pojdi v safe mode zanko - tukaj ostane dokler napajanje ne pride nazaj
     safeModeLoop();
     
-    // Ko se vrne iz safe mode, ponovno inicializiraj
-    Serial.println("Re-inicializacija po povrnitvi napajanja...");
-    // Začni z page0 (intro) za reload globalnih spremenljivk v Nextion
-    Serial.println("Zagon intro strani (page0) za re-inicializacijo displaya...");
-    currentPage = 0;
-    introShown = false;
-    introStartTime = millis();
-    display.showPage(0);
+    // Ko se vrne iz safe mode:
+    // Display je poslal startup sekvenco in je že na page0
+    // display.update() bo zaznal startup sekvenco in naredil re-inicializacijo
+    Serial.println("========================================");
+    Serial.println("Povrnitev napajanja...");
+    Serial.println("Čakam na startup sekvenco displaya...");
+    Serial.println("========================================");
     
-    // POMEMBNO: vrni se na začetek loop() brez klica update() funkcij
+    // POMEMBNO: vrni se na začetek loop() in pusti display.update() 
+    // da zazna startup sekvenco in naredi re-inicializacijo
     return;
+  }
+  
+  // ===== STARTUP SEKVENCA - Preveri če je display poslal startup signal =====
+  // To se zgodi ob povrnitvi napajanja ko se display ponovno zažene
+  if (display.wasStartupDetected()) {
+    Serial.println("========================================");
+    Serial.println("STARTUP RE-INICIALIZACIJA");
+    Serial.println("Display se je ponovno zagnal (povrnitev napajanja)");
+    Serial.println("Sistem se obnaša kot nov zagon");
+    Serial.println("========================================");
+    
+    // Resetiraj stanje - stroj se obnaša kot da se je zagnal na novo
+    currentPage = 0;
+    
+    // Počisti startup flag
+    display.clearStartupFlag();
+    
+    // Nadaljuj z normalnim delovanjem
   }
   
   // ===== POWER MONITORING - Periodični debug izpis =====

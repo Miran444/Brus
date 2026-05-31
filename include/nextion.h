@@ -16,7 +16,8 @@ enum NextionEventType {
     NEXTION_EVENT_WAKE = 0x87,
     NEXTION_EVENT_STARTUP = 0x88,
     NEXTION_EVENT_NUMERIC = 0x71,
-    NEXTION_EVENT_STRING = 0x70
+    NEXTION_EVENT_STRING = 0x70,
+    NEXTION_EVENT_INVALID_INSTRUCTION = 0x1A  // Invalid Variable name or attribute
 };
 
 // Event strukture
@@ -76,6 +77,15 @@ private:
     uint16_t errorCount;
     uint16_t eventsProcessed;
     
+    // Temporary buffer za startup sequence detection
+    uint8_t tempBuffer[10];  // Nextion startup: printh 00 00 00 ff ff ff 88 ff ff ff
+    uint8_t tempBufferSize;
+    bool hasTempData;
+    
+    // Startup detection flag - signalizira da se je display ponovno zagnal
+    bool startupDetected;
+    bool displayReady;  // Ali je display pripravljen za sprejemanje ukazov
+    
     // Helper funkcije
     void sendCommand(const char* cmd);
     void endCommand();
@@ -87,11 +97,14 @@ private:
     bool readStringEventData(String& data);
     bool readNumericEventData(int32_t& value);
     void flushInvalidData();
+    bool detectStartupSequence();  // Preveri ali je v bufferju startup sekvenca
+    void handleStartupSequence();  // Obdela re-inicializacijo po povrnitvi napajanja
     
 public:
     NextionDisplay();
     
     void begin();
+    void waitForStartup();  // Počakaj na startup sekvenco brez pošiljanja reset ukaza
     void update(unsigned long currentMillis);
     
     // Callback registracija
@@ -130,6 +143,10 @@ public:
     uint16_t getEventsProcessed() const { return eventsProcessed; }
     void resetStatistics();
     bool isHealthy() const;  // Preveri ali komunikacija normalno deluje
+    
+    // Startup detection
+    bool wasStartupDetected() const { return startupDetected; }
+    void clearStartupFlag() { startupDetected = false; }
     
     // Branje dogodkov (deprecated - uporabi callback sistem)
     bool available();

@@ -29,6 +29,14 @@ NextionDisplay::NextionDisplay() {
     lastRxTime = 0;
     errorCount = 0;
     eventsProcessed = 0;
+    
+    // Temp buffer za startup sequence
+    tempBufferSize = 0;
+    hasTempData = false;
+    
+    // Startup detection
+    startupDetected = false;
+    displayReady = false;  // Display še ni pripravljen
 }
 
 void NextionDisplay::begin() {
@@ -46,11 +54,15 @@ void NextionDisplay::begin() {
     Serial.println(NEXTION_BAUD);
     
     // Reset Nextion display
+    // POMEMBNO: Pošlji direktno brez displayReady preverjanja (je še false)
     Serial.println("[NEXTION] Pošiljam reset ukaz...");
-    sendCommand("rest");
+    serial->print("rest");
+    serial->write(0xFF);
+    serial->write(0xFF);
+    serial->write(0xFF);
     
-    // Počakaj na startup sekvenco: 0x00 0x00 0x00 0xFF 0xFF 0xFF 0x88 0xFF 0xFF 0xFF
-    Serial.println("[NEXTION] Čakam na startup sekvenco...");
+    // Počakaj na startup sekvenco: printh 00 00 00 ff ff ff 88 ff ff ff (10 bytov)
+    Serial.println("[NEXTION] Čakam na startup sekvenco (10B)...");
     unsigned long timeout = millis() + 3000;  // 3 sekunde timeout
     bool startupReceived = false;
     
@@ -63,7 +75,7 @@ void NextionDisplay::begin() {
             if (buf[0] == 0x00 && buf[1] == 0x00 && buf[2] == 0x00 &&
                 buf[3] == 0xFF && buf[4] == 0xFF && buf[5] == 0xFF &&
                 buf[6] == 0x88 && buf[7] == 0xFF && buf[8] == 0xFF && buf[9] == 0xFF) {
-                Serial.println("[NEXTION] ✓ Startup sekvenca prejeta (0x88)");
+                Serial.println("[NEXTION] ✓ Startup sekvenca prejeta (10B)");
                 startupReceived = true;
                 break;
             } else {
@@ -81,7 +93,7 @@ void NextionDisplay::begin() {
     }
     
     if (!startupReceived) {
-        Serial.println("[NEXTION] ✗ NAPAKA: Startup sekvenca ni prejeta!");
+        Serial.println("[NEXTION] ✗ NAPAKA: Startup sekvenca (10B) ni prejeta!");
         errorCount++;
     } else {
         Serial.println("[NEXTION] ✓ Startup uspešen");
@@ -97,9 +109,80 @@ void NextionDisplay::begin() {
     Serial.println(startupReceived ? "USPEŠNA ✓" : "NEUSPEŠNA ✗");
     Serial.println("[NEXTION] PAGE eventi preko callback sistema");
     Serial.println("[NEXTION] ═══════════════════════════════");
+    
+    // Display je pripravljen šele po prvem PAGE eventu
+    displayReady = false;
+}
+
+void NextionDisplay::waitForStartup() {
+    // Ta funkcija se uporablja po povrnitvi napajanja ko display
+    // že sam pošlje startup sekvenco - NE pošiljamo reset ukaza!
+    
+    // POMEMBNO: Če serial še ni inicializiran, ga inicializiraj
+    if (serial == nullptr) {
+        serial = new HardwareSerial(2);
+        serial->begin(NEXTION_BAUD, SERIAL_8N1, NEXTION_RX, NEXTION_TX);
+        delay(100);  // Počakaj da se UART stabilizira
+        Serial.println("[NEXTION] UART2 inicializiran");
+    }
+    
+    Serial.println("[NEXTION] Čakam na startup sekvenco displaya...");
+    
+    // Počisti buffer
+    clearBuffer();
+    
+    // Počakaj na startup sekvenco v bufferju (max 3 sekunde)
+    unsigned long timeout = millis() + 3000;
+    bool startupReceived = false;
+    
+    while (millis() < timeout) {
+        if (serial->available() >= 10) {
+            uint8_t buf[10];
+            serial->readBytes(buf, 10);
+            
+            // Preveri startup sekvenco
+            if (buf[0] == 0x00 && buf[1] == 0x00 && buf[2] == 0x00 &&
+                buf[3] == 0xFF && buf[4] == 0xFF && buf[5] == 0xFF &&
+                buf[6] == 0x88 && buf[7] == 0xFF && buf[8] == 0xFF && buf[9] == 0xFF) {
+                Serial.println("[NEXTION] ✓ Startup sekvenca prejeta (10B)");
+                startupReceived = true;
+                break;
+            } else {
+                Serial.print("[NEXTION] Nepričakovani podatki: ");
+                for (int i = 0; i < 10; i++) {
+                    Serial.print("0x");
+                    if (buf[i] < 0x10) Serial.print("0");
+                    Serial.print(buf[i], HEX);
+                    Serial.print(" ");
+                }
+                Serial.println();
+            }
+        }
+        delay(10);
+    }
+    
+    if (!startupReceived) {
+        Serial.println("[NEXTION] ✗ NAPAKA: Startup sekvenca (10B) ni prejeta!");
+        errorCount++;
+    }
+    
+    // Resetiraj statistiko
+    resetStatistics();
+    
+    Serial.println("[NEXTION] ═══════════════════════════════");
+    Serial.print("[NEXTION] Re-inicializacija po povrnitvi napajanja ");
+    Serial.println(startupReceived ? "USPEŠNA ✓" : "NEUSPEŠNA ✗");
+    Serial.println("[NEXTION] Čakam na PAGE eventi...");
+    Serial.println("[NEXTION] ═══════════════════════════════");
+    
+    // Display še ni pripravljen - čakamo na PAGE event
+    displayReady = false;
 }
 
 void NextionDisplay::sendCommand(const char* cmd) {
+    if (!displayReady) {
+        return;  // Ignoriraj ukaze dokler display ni pripravljen
+    }
     serial->print(cmd);
     endCommand();
 }
@@ -141,9 +224,141 @@ void NextionDisplay::flushInvalidData() {
 
 // ===== EVENT PROCESSING =====
 
+bool NextionDisplay::detectStartupSequence() {
+    // Nextion startup: printh 00 00 00 ff ff ff 88 ff ff ff (10 bytov)
+    if (serial->available() < 10) {
+        return false;
+    }
+    
+    // Preberi 10 bytov v temp buffer
+    uint8_t buf[10];
+    size_t bytesRead = serial->readBytes(buf, 10);
+    
+    if (bytesRead != 10) {
+        // Shrani nepopolne byte v temp buffer za kasneje
+        tempBufferSize = bytesRead;
+        memcpy(tempBuffer, buf, bytesRead);
+        hasTempData = true;
+        return false;
+    }
+    
+    // Preveri startup sekvenco: 0x00 0x00 0x00 0xFF 0xFF 0xFF 0x88 0xFF 0xFF 0xFF
+    bool isStartup = (buf[0] == 0x00 && buf[1] == 0x00 && buf[2] == 0x00 &&
+                      buf[3] == 0xFF && buf[4] == 0xFF && buf[5] == 0xFF &&
+                      buf[6] == 0x88 && buf[7] == 0xFF && buf[8] == 0xFF && buf[9] == 0xFF);
+    
+    if (isStartup) {
+        Serial.println("[NEXTION] ✓ Startup sekvenca zaznana (10B)");
+        hasTempData = false;  // Počisti temp buffer
+        startupDetected = true;  // Nastavi flag za main.cpp
+        return true;
+    }
+    
+    // Če NI startup sekvenca, shrani byte v temp buffer da jih lahko obdelamo
+    tempBufferSize = 10;
+    memcpy(tempBuffer, buf, 10);
+    hasTempData = true;
+    
+    Serial.print("[NEXTION] ⚠ Ni startup (shranil 10B): ");
+    for (int i = 0; i < 10; i++) {
+        Serial.print("0x");
+        if (buf[i] < 0x10) Serial.print("0");
+        Serial.print(buf[i], HEX);
+        Serial.print(" ");
+    }
+    Serial.println();
+    
+    return false;
+}
+
+void NextionDisplay::handleStartupSequence() {
+    // Display se je ponovno zagnal (npr. po povrnitvi napajanja)
+    // Display je že sam na page0 (intro stran) - NI POTREBNO pošiljati showPage(0)
+    
+    // Počisti buffer
+    clearBuffer();
+    
+    // Resetiraj statistiko
+    resetStatistics();
+    
+    // Resetiraj bufferirane vrednosti da se ponovno pošljejo
+    lastMode = "";
+    lastCycles = 0;
+    lastCompletedCycles = 0;
+    lastAngle = -999.0;
+    lastStatus = "";
+    lastBrusState = false;
+    lastPnevState = false;
+    lastSpindleMoving = false;
+    lastSpindleSpeed = 255;
+    lastAngleStart = -999.0;
+    lastAngleStop = -999.0;
+    
+    currentPage = 0;  // Display je na page0 (intro)
+    
+    // Display še ni pripravljen za ukaze - čakamo na PAGE event
+    displayReady = false;
+    
+    Serial.println("[NEXTION] ✓ Re-inicializacija končana");
+    Serial.println("[NEXTION] Čakam na prvi PAGE event...");
+    
+    // POMEMBNO: Počakaj da se display popolnoma priprav preden pošiljamo ukaze
+    // Display potrebuje nekaj časa po startup sekvenci preden je pripravljen
+    delay(100);
+    
+    // NE kličemo pageCallback(0) - display bo sam poslal PAGE event
+    // ko bo pripravljen in preklopil na naslednjo stran
+}
+
 bool NextionDisplay::readEvent() {
+    // Najprej preveri če imamo shranjene podatke v temp bufferju
+    // (ki niso bili startup sekvenca)
+    if (hasTempData && tempBufferSize > 0) {
+        Serial.print("[NEXTION] Procesiranje temp bufferja (");
+        Serial.print(tempBufferSize);
+        Serial.println(" bytov)");
+        
+        // Procesiraj byte iz temp bufferja
+        for (uint8_t i = 0; i < tempBufferSize; i++) {
+            uint8_t eventType = tempBuffer[i];
+            
+            // Terminator (0xFF) - preskoči
+            if (eventType == 0xFF) {
+                continue;
+            }
+            
+            Serial.print("[NEXTION] Temp byte [0x");
+            if (eventType < 0x10) Serial.print("0");
+            Serial.print(eventType, HEX);
+            Serial.println("] - obdelavam kot invalid");
+        }
+        
+        // Počisti temp buffer
+        hasTempData = false;
+        tempBufferSize = 0;
+        errorCount++;
+        return false;  // Poročamo da ni bilo validnega eventa
+    }
+    
     if (!serial->available()) {
         return false;
+    }
+    
+    // POMEMBNO: Če se začne z 0x00, to je LAHKO startup sekvenca
+    // Počakaj da je vsaj 10 bytov preden začneš procesirati
+    if (serial->peek() == 0x00) {
+        // Če ni dovolj bytov, POČAKAJ (ne procesiraj kot invalid event!)
+        if (serial->available() < 10) {
+            return false;  // Počakaj na več podatkov
+        }
+        
+        // Zdaj imamo dovolj bytov - preveri za startup sekvenco
+        if (detectStartupSequence()) {
+            handleStartupSequence();
+            return true;  // Startup sekvenca je bila obdelana
+        }
+        // Če ni bila startup sekvenca, nadaljuj z normalnim procesiranjem
+        // (detectStartupSequence je že shranil byte v temp buffer)
     }
     
     // Preberi tip dogodka
@@ -152,6 +367,21 @@ bool NextionDisplay::readEvent() {
     // Terminator (0xFF) - počisti
     if (eventType == 0xFF) {
         serial->read();
+        return false;
+    }
+    
+    // Invalid instruction (0x1A) - napaka: poslali smo neveljaven ukaz
+    if (eventType == NEXTION_EVENT_INVALID_INSTRUCTION) {
+        serial->read();  // Počisti event type
+        // Preberi še terminatorje (0xFF 0xFF 0xFF)
+        if (serial->available() >= 3) {
+            serial->read();
+            serial->read();
+            serial->read();
+        }
+        Serial.println("[NEXTION] ⚠️ NAPAKA: Invalid variable/attribute (0x1A)");
+        Serial.println("[NEXTION] -> Poslali smo ukaz za neobstoječ objekt ali atribut");
+        errorCount++;
         return false;
     }
     
@@ -252,6 +482,12 @@ bool NextionDisplay::processUnifiedEvent() {
             uint8_t pageId = valueBytes[0];
             Serial.print("[NEXTION] PAGE event: ");
             Serial.println(pageId);
+            
+            // Display je pripravljen za ukaze šele po prvem PAGE eventu
+            if (!displayReady) {
+                displayReady = true;
+                Serial.println("[NEXTION] ✓ Display pripravljen za ukaze");
+            }
             
             // Pošlji SAMO kot string (ne pageCallback) da se ne kliče 2x
             // handleStringData že vsebuje logiko za PAGE eventi
@@ -472,6 +708,9 @@ bool NextionDisplay::readNumericEventData(int32_t& value) {
 }
 
 void NextionDisplay::setText(const char* obj, const char* text) {
+    if (!displayReady) {
+        return;  // Ignoriraj ukaze dokler display ni pripravljen
+    }
     serial->print(obj);
     serial->print(".txt=\"");
     serial->print(text);
@@ -480,6 +719,9 @@ void NextionDisplay::setText(const char* obj, const char* text) {
 }
 
 void NextionDisplay::setNumber(const char* obj, int32_t value) {
+    if (!displayReady) {
+        return;  // Ignoriraj ukaze dokler display ni pripravljen
+    }
     serial->print(obj);
     serial->print(".val=");
     serial->print(value);

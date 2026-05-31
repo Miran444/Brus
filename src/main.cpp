@@ -19,6 +19,11 @@ Preferences preferences;
 unsigned long lastPrintTime = 0;
 const unsigned long PRINT_INTERVAL = 1000; // Izpis vsako sekundo
 
+// Power monitoring - Detekcija napajanja iz usmernika
+bool powerPresent = false;          // Ali je napajanje iz usmernika prisotno
+float powerVoltage = 0.0;           // Napetost na ADC pinu (V)
+unsigned long lastPowerCheck = 0;   // Časovnik za periodično preverjanje
+
 // Stanje sistema
 S1Mode lastMode = MODE_OFF;
 bool autoModeActive = false;
@@ -77,6 +82,22 @@ bool anglesChanged = false;  // Ali so se koti spremenili (za aktivacijo bSave)
 static int16_t receivedID5 = -1;  // xStopAngle × 10
 static int16_t receivedID6 = -1;  // xStartAngle × 10
 
+// Flags za opozorila
+bool autoModeWarningShown = false;  // Za prikaz NAPAKA: Koti niso nastavljeni samo enkrat
+bool safeModeStatusShown = false;   // Za prikaz safe mode statusa samo enkrat
+bool powerStatusShown = false;      // Za prikaz power monitoring statusa samo enkrat
+
+// Zadnje prikazano stanje za debug izpis
+static S1Mode lastPrintedMode = MODE_OFF;
+static S2Cycles lastPrintedCycles = CYCLES_NONE;
+static unsigned long lastPrintedRevolutions = 0;
+static bool lastPrintedMotor = false;
+static bool lastPrintedPump = false;
+static bool lastPrintedKnife = false;
+static bool lastPrintedSpindle = false;
+static SpindleDirection lastPrintedDir = SPINDLE_DOWN;
+static uint8_t lastPrintedSpeed = 0;
+
 // Page5 (pgRef) - Referenčni hod
 enum ReferenceState {
   REF_IDLE = 0,           // Ni aktivno
@@ -95,6 +116,97 @@ uint32_t lastRevCount = 0;
 
 // Deklaracije funkcij
 void handleTouchPress(uint8_t componentId);
+
+// ===== POWER MONITORING FUNCTIONS =====
+/**
+ * @brief Preberi napetost na ADC pinu za detekcijo napajanja
+ * @return Napetost v voltih
+ */
+float readPowerVoltage() {
+  int adcValue = analogRead(POWER_SENSE_PIN);
+  float voltage = (adcValue / (float)ADC_MAX_VALUE) * ADC_REFERENCE_VOLTAGE;
+  return voltage;
+}
+
+/**
+ * @brief Preveri prisotnost napajanja iz usmernika
+ * @return true če je napajanje prisotno, false sicer
+ */
+bool checkPowerPresence() {
+  powerVoltage = readPowerVoltage();
+  powerPresent = (powerVoltage >= POWER_VOLTAGE_THRESHOLD);
+  return powerPresent;
+}
+
+/**
+ * @brief Safe mode zanka - aktivna samo Serial komunikacija
+ * Program ostane tukaj dokler se napajanje iz usmernika ne pojavi
+ */
+void safeModeLoop() {
+  Serial.println("========================================");
+  Serial.println("VARNOSTNI NAČIN (SAFE MODE)");
+  Serial.println("========================================");
+  Serial.println("OPOZORILO: Napajanje iz usmernika ni prisotno!");
+  Serial.println("Periferne enote (display, vhodi, senzorji) ne delujejo.");
+  Serial.println("Program je v varnostnem načinu - aktivna samo Serial komunikacija.");
+  Serial.println("Čakam na napajanje iz usmernika...");
+  Serial.println("========================================");
+  
+  while (!checkPowerPresence()) {
+    // Feed watchdog
+    yield();
+    
+    // Preveri napajanje vsake 0.5s
+    static unsigned long lastCheck = 0;
+    unsigned long currentMillis = millis();
+    
+    if (currentMillis - lastCheck >= 500) {
+      lastCheck = currentMillis;
+      
+      // Pošlji status po Serial samo prvič
+      if (!safeModeStatusShown) {
+        Serial.print("Napajanje iz usmernika: NI PRISOTNO | ADC napetost: ");
+        Serial.print(powerVoltage, 2);
+        Serial.println(" V");
+        safeModeStatusShown = true;
+      }
+    }
+    
+    // Preglej Serial ukaze (angle= simulator mode)
+    if (Serial.available()) {
+      String cmd = Serial.readStringUntil('\n');
+      cmd.trim();
+      
+      if (cmd.startsWith("angle=")) {
+        float angle = cmd.substring(6).toFloat();
+        if (angle >= 0 && angle <= 360) {
+          Serial.print("OPOZORILO: Simulator mode v safe mode. Kot: ");
+          Serial.print(angle, 1);
+          Serial.println("° (simulator še ni inicializiran)");
+        }
+      }
+      
+      // Očisti buffer
+      while (Serial.available()) Serial.read();
+    }
+    
+    delay(50);
+  }
+  
+  // Reset flag za naslednji safe mode
+  safeModeStatusShown = false;
+  
+  Serial.println("========================================");
+  Serial.println("Napajanje iz usmernika PRISOTNO!");
+  float realVoltage = powerVoltage * 2.0;  // Delilnik napetosti 1:1
+  Serial.print("Napajalna napetost: ");
+  Serial.print(realVoltage, 2);
+  Serial.print(" V (ADC: ");
+  Serial.print(powerVoltage, 2);
+  Serial.println(" V)");
+  Serial.println("Zagon normalnega obratovanja...");
+  Serial.println("========================================");
+}
 void handleTouchRelease(uint8_t componentId);
 void handlePageChange(uint8_t newPage);
 void handleStringData(const String& data);
@@ -143,6 +255,29 @@ void setup() {
   Serial.println("  BRUS - KNECHT WEMA USK 200/E  ");
   Serial.println("  ESP32-S3 Kontroler v1.0       ");
   Serial.println("=================================");
+  
+  // ===== POWER MONITORING - ADC inicializacija =====
+  pinMode(POWER_SENSE_PIN, INPUT);
+  analogReadResolution(12);  // 12-bit ADC (0-4095)
+  Serial.println("Power monitoring inicializiran (GPIO1 - ADC1_0)");
+  
+  // Preveri prisotnost napajanja iz usmernika
+  checkPowerPresence();
+  Serial.print("Začetno stanje napajanja: ");
+  if (powerPresent) {
+    float realVoltage = powerVoltage * 2.0;  // Delilnik napetosti 1:1
+    Serial.print("PRISOTNO | Napajalna napetost: ");
+    Serial.print(realVoltage, 2);
+    Serial.print(" V (ADC: ");
+    Serial.print(powerVoltage, 2);
+    Serial.println(" V)");
+  } else {
+    Serial.print("NI PRISOTNO | ADC napetost: ");
+    Serial.print(powerVoltage, 2);
+    Serial.println(" V)");
+    // Če napajanje ni prisotno, pojdi v safe mode
+    safeModeLoop();
+  }
   
   // Inicializacija izhodov (NAJPREJ - varno stanje)
   outputs.begin();
@@ -521,7 +656,7 @@ void handleTouchPress(uint8_t componentId) {
           angleSettingMode = ANGLE_SET_START;
           tempAngleStart = angleSensor.getCalibratedAngle();
           Serial.println("[bNastaviKote] Nastavljanje ZAČETNEGA kota - uporabite tipke S42(Gor)/S41(Dol)");
-          display.setText("bNastaviKote", "ZACETNI");
+          display.setText("bNastaviKote", "Zacetni");
           updatePage7AngleDisplay();
         }
         else if (angleSettingMode == ANGLE_SET_START) {
@@ -534,7 +669,7 @@ void handleTouchPress(uint8_t componentId) {
           Serial.print(tempAngleStart, 1);
           Serial.println("°");
           Serial.println("[bNastaviKote] Nastavljanje KONČNEGA kota - uporabite tipke S42(Gor)/S41(Dol)");
-          display.setText("bNastaviKote", "KONČNI");
+          display.setText("bNastaviKote", "Koncni");
           updatePage7AngleDisplay();
           display.setButtonState("bSave", true);
         }
@@ -551,7 +686,7 @@ void handleTouchPress(uint8_t componentId) {
             Serial.print(tempAngleStop, 1);
             Serial.println("°");
             angleSettingMode = ANGLE_IDLE;
-            display.setText("bNastaviKote", "NASTAVI");
+            display.setText("bNastaviKote", "Nastavi");
             return;
           }
           
@@ -712,6 +847,54 @@ void loop() {
   // Feed watchdog timer
   yield();
   
+  // ===== POWER MONITORING - Preverjanje napajanja TAKOJ na začetku =====
+  // Preverimo napajanje PRED vsakim update() klicem, da preprečimo lažne alarme
+  checkPowerPresence();
+  if (!powerPresent) {
+    // Napajanje je izpadlo - pojdi v safe mode
+    Serial.println("========================================");
+    Serial.println("OPOZORILO: Napajanje iz usmernika IZPADLO!");
+    Serial.print("ADC napetost: ");
+    Serial.print(powerVoltage, 2);
+    Serial.println(" V");
+    Serial.println("========================================");
+    
+    // Ustavi vse izhode (varnostno) - samo enkrat
+    outputs.emergencyStop();
+    autoCycle.stop();
+    
+    // Pojdi v safe mode zanko - tukaj ostane dokler napajanje ne pride nazaj
+    safeModeLoop();
+    
+    // Ko se vrne iz safe mode, ponovno inicializiraj
+    Serial.println("Re-inicializacija po povrnitvi napajanja...");
+    // Začni z page0 (intro) za reload globalnih spremenljivk v Nextion
+    Serial.println("Zagon intro strani (page0) za re-inicializacijo displaya...");
+    currentPage = 0;
+    introShown = false;
+    introStartTime = millis();
+    display.showPage(0);
+    
+    // POMEMBNO: vrni se na začetek loop() brez klica update() funkcij
+    return;
+  }
+  
+  // ===== POWER MONITORING - Periodični debug izpis =====
+  if (currentMillis - lastPowerCheck >= POWER_CHECK_INTERVAL) {
+    lastPowerCheck = currentMillis;
+    
+    // Debug output samo prvič
+    if (!powerStatusShown) {
+      float realVoltage = powerVoltage * 2.0;  // Delilnik napetosti 1:1
+      Serial.print("[POWER] Napajanje iz usmernika: OK | Napajalna napetost: ");
+      Serial.print(realVoltage, 2);
+      Serial.print(" V (ADC: ");
+      Serial.print(powerVoltage, 2);
+      Serial.println(" V)");
+      powerStatusShown = true;
+    }
+  }
+  
   // ===== SIMULATOR MODE - Serial ukazi =====
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
@@ -800,26 +983,7 @@ void loop() {
   if (currentPage == 2 && (currentMillis - lastPage2Update >= 500)) {
     lastPage2Update = currentMillis;
     
-    // Posodobi tPomik - status motorja
-    if (outputs.isSpindleMoving()) {
-      if (outputs.getSpindleDirection() == SPINDLE_UP) {
-        display.setText("tPomik", "GOR");
-        // Nastavi zeleno barvo
-        Serial2.print("tPomik.pco=2016");  // Zelena
-        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
-      } else {
-        display.setText("tPomik", "DOL");
-        // Nastavi zeleno barvo
-        Serial2.print("tPomik.pco=2016");  // Zelena
-        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
-      }
-    } else {
-      display.setText("tPomik", "STOP");
-      // Nastavi rdečo barvo
-      Serial2.print("tPomik.pco=63488");  // Rdeča
-      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
-    }
-    
+    // Posodobi tStatus_pg2 - status motorja in sporočila
     // Preveri in omogoči/onemogoči bPnev glede na kot
     float currentAngle = angleSensor.getCalibratedAngle();
     if (anglesCalibrated) {
@@ -860,32 +1024,27 @@ void loop() {
       if (outputs.getSpindleDirection() == SPINDLE_UP) {
         display.setText("tPomik", "GOR");
         // Nastavi zeleno barvo
-        Serial2.print("tPomik.pco=2016");  // Zelena
-        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+        display.sendRawCommand("tPomik.pco=2016");  // Zelena
       } else {
         display.setText("tPomik", "DOL");
         // Nastavi zeleno barvo
-        Serial2.print("tPomik.pco=2016");  // Zelena
-        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+        display.sendRawCommand("tPomik.pco=2016");  // Zelena
       }
     } else {
       display.setText("tPomik", "STOP");
       // Nastavi rdečo barvo
-      Serial2.print("tPomik.pco=63488");  // Rdeča
-      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+      display.sendRawCommand("tPomik.pco=63488");  // Rdeča
     }
     
     // Posodobi tKamen - status brusnega kamna
     if (outputs.isGrindingMotorOn()) {
       display.setText("tKamen", "RUN");
       // Nastavi modro barvo
-      Serial2.print("tKamen.pco=1024");  // Modra
-      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+      display.sendRawCommand("tKamen.pco=1024");  // Modra
     } else {
       display.setText("tKamen", "STOP");
       // Nastavi rdečo barvo
-      Serial2.print("tKamen.pco=63488");  // Rdeča
-      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+      display.sendRawCommand("tKamen.pco=63488");  // Rdeča
     }
     
     // Posodobi tCilinder - status pnevmatskega cilindra
@@ -893,18 +1052,15 @@ void loop() {
     if (cylinderState == BrusOutputs::KNIFE_MOVING_OUT) {
       display.setText("tCilinder", "OUT");
       // Nastavi modro barvo
-      Serial2.print("tCilinder.pco=1024");  // Modra
-      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+      display.sendRawCommand("tCilinder.pco=1024");  // Modra
     } else if (cylinderState == BrusOutputs::KNIFE_MOVING_IN) {
       display.setText("tCilinder", "IN");
       // Nastavi modro barvo
-      Serial2.print("tCilinder.pco=1024");  // Modra
-      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+      display.sendRawCommand("tCilinder.pco=1024");  // Modra
     } else {
       display.setText("tCilinder", "STOP");
       // Nastavi rdečo barvo
-      Serial2.print("tCilinder.pco=63488");  // Rdeča
-      Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+      display.sendRawCommand("tCilinder.pco=63488");  // Rdeča
     }
     
     // Preveri pogoje za bStart in posodobi tStatus_pg3
@@ -984,17 +1140,19 @@ void loop() {
     if (lastMode == MODE_AUTO && mode != MODE_AUTO) {
       autoCycle.stop();
       autoModeActive = false;
+      // Resetiraj warning flag za naslednji vstop v AUTO način
+      autoModeWarningShown = false;
     }
     
     // Ob preklopu v AUTO način
     if (mode == MODE_AUTO && lastMode != MODE_AUTO) {
-      // Če nismo na page0, pojdi na page0
-      if (currentPage != 0) {
-        Serial.println("[MODE_AUTO] Preklop na page0");
-        display.showPage(0);
-        currentPage = 0;
+      // Če nismo na page3 (pgModeAUTO), pojdi na page3
+      if (currentPage != 3) {
+        Serial.println("[MODE_AUTO] Preklop na page3 (pgModeAUTO)");
+        display.showPage(3);
+        currentPage = 3;
       }
-      // Posodobi bSettings gumb glede na pripravljenost
+      // Posodobi bStart gumb glede na pripravljenost
       updateAutoModeReadiness();
     }
     
@@ -1106,9 +1264,13 @@ void loop() {
     if (!autoModeActive && !autoCycle.isRunning()) {
       // Preveri če so koti nastavljeni
       if (!anglesConfigured) {
-        Serial.println("NAPAKA: Koti niso nastavljeni - uporabite page7!");
+        if (!autoModeWarningShown) {
+          Serial.println("NAPAKA: Koti niso nastavljeni - uporabite page7!");
+          autoModeWarningShown = true;
+        }
         // V novem GUI je page3 za start, brez dodatnih sporočil tukaj
       } else {
+        autoModeWarningShown = false;  // Resetiraj warning flag
         S2Cycles cycles = inputs.getS2Cycles();
         
         if (cycles == CYCLES_CONTINUOUS) {
@@ -1161,72 +1323,111 @@ void loop() {
     Serial.println("!!! TEMPERATURA ALARM - SISTEM USTAVLJEN !!!");
   }
   
-  // ===== PERIODIČEN DEBUG IZPIS =====
+  // ===== PERIODIČEN DEBUG IZPIS - samo ob spremembi =====
   if (millis() - lastPrintTime > PRINT_INTERVAL) {
     lastPrintTime = millis();
     
-    // Serial output
-    Serial.print("Mode: ");
-    switch(mode) {
-      case MODE_OFF:    Serial.print("OFF     "); break;
-      case MODE_MANUAL: Serial.print("MANUAL  "); break;
-      case MODE_AUTO:   Serial.print("AUTO    "); break;
+    // Preveri spremembe
+    S2Cycles cycles = inputs.getS2Cycles();
+    unsigned long revolutions = inputs.getRevolutions();
+    bool motorOn = outputs.isGrindingMotorOn();
+    bool pumpOn = outputs.isWaterPumpOn();
+    bool knifeOn = outputs.isKnifePusherOn();
+    bool spindleMoving = outputs.isSpindleMoving();
+    SpindleDirection spindleDir = outputs.getSpindleDirection();
+    uint8_t spindleSpeed = outputs.getSpindleSpeed();
+    
+    bool stateChanged = (mode != lastPrintedMode) ||
+                        (cycles != lastPrintedCycles) ||
+                        (revolutions != lastPrintedRevolutions) ||
+                        (motorOn != lastPrintedMotor) ||
+                        (pumpOn != lastPrintedPump) ||
+                        (knifeOn != lastPrintedKnife) ||
+                        (spindleMoving != lastPrintedSpindle) ||
+                        (spindleDir != lastPrintedDir) ||
+                        (spindleSpeed != lastPrintedSpeed);
+    
+    // Izpiši samo ob spremembi
+    if (stateChanged) {
+      // Serial output
+      Serial.print("Mode: ");
+      switch(mode) {
+        case MODE_OFF:    Serial.print("OFF     "); break;
+        case MODE_MANUAL: Serial.print("MANUAL  "); break;
+        case MODE_AUTO:   Serial.print("AUTO    "); break;
+      }
+      
+      if (mode == MODE_AUTO && autoCycle.isRunning()) {
+        Serial.print("| ");
+        autoCycle.printStatus();
+      } else {
+        Serial.print("| Cycles: ");
+        if (cycles == CYCLES_CONTINUOUS) {
+          Serial.print("CONT");
+        } else {
+          Serial.print(cycles);
+          Serial.print("   ");
+        }
+        
+        Serial.print(" | Rev: ");
+        Serial.print(revolutions);
+        Serial.print("  ");
+        
+        // Prikaz kota iz AS5600 (če je prisoten)
+        if (USE_AS5600_FOR_TILT && inputs.getAngleEncoder()->isSensorPresent()) {
+          float angle = inputs.getSpindleAngle();
+          Serial.print("| Angle: ");
+          Serial.print(angle, 1);
+          Serial.print("° ");
+        }
+        
+        // Prikaz aktivnih komponent
+        if (motorOn) Serial.print("[MOTOR] ");
+        if (pumpOn) Serial.print("[PUMP] ");
+        if (knifeOn) Serial.print("[KNIFE] ");
+        if (spindleMoving) {
+          Serial.print("[SPINDLE ");
+          Serial.print(spindleDir == SPINDLE_UP ? "UP" : "DN");
+          Serial.print(":"); 
+          Serial.print(spindleSpeed);
+          Serial.print("] ");
+        }
+        
+        // Senzorji in alarmi
+        if (inputs.isSpindleTilted()) Serial.print("[TILT<10°] ");
+        if (inputs.isTempAlarm()) Serial.print("[TEMP!] ");
+        
+        Serial.println();
+      }
+      
+      // Shrani zadnje stanje
+      lastPrintedMode = mode;
+      lastPrintedCycles = cycles;
+      lastPrintedRevolutions = revolutions;
+      lastPrintedMotor = motorOn;
+      lastPrintedPump = pumpOn;
+      lastPrintedKnife = knifeOn;
+      lastPrintedSpindle = spindleMoving;
+      lastPrintedDir = spindleDir;
+      lastPrintedSpeed = spindleSpeed;
     }
     
-    // Nextion display update
+    // Nextion display update - vedno posodobi
     const char* modeStr = (mode == MODE_OFF) ? "OFF" : (mode == MODE_MANUAL) ? "MANUAL" : "AUTO";
     display.setMode(modeStr);
     
     if (mode == MODE_AUTO && autoCycle.isRunning()) {
-      Serial.print("| ");
-      autoCycle.printStatus();
-      
-      // Nextion - cikli
       display.setCycles(autoCycle.getCompletedCycles(), autoCycle.getTargetCycles());
     } else {
-      Serial.print("| Cycles: ");
-      S2Cycles cycles = inputs.getS2Cycles();
       if (cycles == CYCLES_CONTINUOUS) {
-        Serial.print("CONT");
         display.setCycles(0, 99);  // 99 = continuous
       } else {
-        Serial.print(cycles);
-        Serial.print("   ");
         display.setCycles(0, cycles);
       }
       
-      Serial.print(" | Rev: ");
-      Serial.print(inputs.getRevolutions());
-      Serial.print("  ");
-      
-      // Prikaz kota iz AS5600 (če je prisoten)
       if (USE_AS5600_FOR_TILT && inputs.getAngleEncoder()->isSensorPresent()) {
-        float angle = inputs.getSpindleAngle();
-        Serial.print("| Angle: ");
-        Serial.print(angle, 1);
-        Serial.print("° ");
-        
-        // Nextion - kot
-        display.setAngle(angle);
+        display.setAngle(inputs.getSpindleAngle());
       }
-      
-      // Prikaz aktivnih komponent
-      if (outputs.isGrindingMotorOn()) Serial.print("[MOTOR] ");
-      if (outputs.isWaterPumpOn()) Serial.print("[PUMP] ");
-      if (outputs.isKnifePusherOn()) Serial.print("[KNIFE] ");
-      if (outputs.isSpindleMoving()) {
-        Serial.print("[SPINDLE ");
-        Serial.print(outputs.getSpindleDirection() == SPINDLE_UP ? "UP" : "DN");
-        Serial.print(":"); 
-        Serial.print(outputs.getSpindleSpeed());
-        Serial.print("] ");
-      }
-      
-      // Senzorji in alarmi
-      if (inputs.isSpindleTilted()) Serial.print("[TILT<10°] ");
-      if (inputs.isTempAlarm()) Serial.print("[TEMP!] ");
-      
-      Serial.println();
     }
     
     // Nextion - število obratov
@@ -1420,13 +1621,25 @@ void setXFloatValue(const char* objName, float value) {
   // Pošlji vrednost
   display.setNumber(objName, intValue);
   
-  Serial.print("[xFloat] ");
-  Serial.print(objName);
-  Serial.print(" = ");
-  Serial.print(value, 1);
-  Serial.print("° (vvs0=");
-  Serial.print(vvs0);
-  Serial.println(")");
+  // Debug izpis samo ob spremembi vrednosti
+  static float lastDebugValue = -999.0;
+  static char lastDebugName[32] = "";
+  
+  bool valueChanged = (abs(value - lastDebugValue) > 0.1) || (strcmp(objName, lastDebugName) != 0);
+  
+  if (valueChanged) {
+    Serial.print("[xFloat] ");
+    Serial.print(objName);
+    Serial.print(" = ");
+    Serial.print(value, 1);
+    Serial.print("° (vvs0=");
+    Serial.print(vvs0);
+    Serial.println(")");
+    
+    lastDebugValue = value;
+    strncpy(lastDebugName, objName, sizeof(lastDebugName) - 1);
+    lastDebugName[sizeof(lastDebugName) - 1] = '\0';
+  }
 }
 
 void processSavedAngles() {

@@ -572,7 +572,11 @@ void NextionDisplay::setCycles(uint8_t current, uint8_t target) {
             sprintf(buffer, "%d/%d", current, target);
         }
         
-        setText("tCycles", buffer);
+        // Pošlji setText samo če smo na page3 (pgModeAUTO), kjer je polje "tCikli"
+        if (currentPage == 3) {
+            setText("tCikli", buffer);
+        }
+        
         lastCompletedCycles = current;
         lastCycles = target;
     }

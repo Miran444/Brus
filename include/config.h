@@ -116,4 +116,11 @@ enum CycleState {
 #define STARTUP_DELAY_MS        2000    // Zakasnitev za vklop motorja kamna (2 sekunde)
 #define KNIFE_MOUNT_TOLERANCE   1.0     // Toleranca za preverjanje montaže noža (stopinje)
 
+// ===== POWER MONITORING =====
+#define POWER_SENSE_PIN         1       // GPIO1 (ADC1_0) - Meritev napajalne napetosti iz usmernika
+#define POWER_VOLTAGE_THRESHOLD 1.5     // Minimalna napetost za detekcijo napajanja (V) - 2.5V nominal, threshold 1.5V
+#define ADC_REFERENCE_VOLTAGE   3.3     // Referenčna napetost ADC (V)
+#define ADC_MAX_VALUE           4095    // Maksimalna vrednost 12-bit ADC
+#define POWER_CHECK_INTERVAL    500     // Interval preverjanja napajanja (ms)
+
 #endif // CONFIG_H

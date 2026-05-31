@@ -25,6 +25,10 @@ private:
     // Temperatura alarm
     bool tempAlarm;
     
+    // Rate limiting za readSN65HVS882
+    unsigned long lastReadTime;
+    const unsigned long READ_INTERVAL_MS = 100;  // 10x/sekundo
+    
     // Privatne funkcije
     uint16_t readSN65HVS882();
     bool getInputBit(uint8_t bitNumber);

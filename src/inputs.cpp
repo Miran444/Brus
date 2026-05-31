@@ -6,6 +6,7 @@ BrusInputs::BrusInputs() {
     revolutionCount = 0;
     lastCounterState = false;
     tempAlarm = false;
+    lastReadTime = 0;
     
     // Inicializacija AS5600
     angleEncoder = new AS5600();
@@ -40,29 +41,103 @@ void BrusInputs::begin() {
     
     // Prvo branje
     update();
+    
+    // Izpis začetnega stanja ob zagonu
+    Serial.println("===== ZAČETNO STANJE VHODOV =====");
+    
+    S1Mode mode = getS1Mode();
+    Serial.print("S1 (Način): ");
+    if (mode == MODE_OFF) Serial.println("OFF");
+    else if (mode == MODE_MANUAL) Serial.println("ROČNO");
+    else if (mode == MODE_AUTO) Serial.println("AVTOMATSKO");
+    
+    S2Cycles cycles = getS2Cycles();
+    Serial.print("S2 (Cikli): ");
+    if (cycles == CYCLES_NONE) Serial.println("OFF");
+    else if (cycles == CYCLES_1) Serial.println("1 CIKEL");
+    else if (cycles == CYCLES_2) Serial.println("2 CIKLA");
+    else if (cycles == CYCLES_3) Serial.println("3 CIKLI");
+    else if (cycles == CYCLES_4) Serial.println("4 CIKLE");
+    else if (cycles == CYCLES_CONTINUOUS) Serial.println("NEPREKINJENO");
+    else Serial.println("?");
+    
+    Serial.print("Tipke: ");
+    if (isResetPressed()) Serial.print("RESET ");
+    if (getInputBit(IN_S41_DOL)) Serial.print("S41-DOL ");
+    if (getInputBit(IN_S42_GOR)) Serial.print("S42-GOR ");
+    Serial.println();
+    
+    Serial.print("Senzorji: ");
+    if (isSpindleAtBottom()) Serial.print("SPODAJ ");
+    if (isSpindleTilted()) Serial.print("NAKLON ");
+    if (isKnifeIn()) Serial.print("NOŽ-IN ");
+    if (isKnifeOut()) Serial.print("NOŽ-VEN ");
+    Serial.println();
+    
+    Serial.print("Raw vrednost: 0x");
+    Serial.print(inputState, HEX);
+    Serial.print(" (bin: ");
+    for (int i = 15; i >= 0; i--) {
+        Serial.print((inputState >> i) & 0x01);
+        if (i == 8) Serial.print(" ");
+    }
+    Serial.println(")");
+    Serial.println("==================================");
 }
 
 uint16_t BrusInputs::readSN65HVS882() {
-    uint16_t data = 0;
+    uint8_t chip1 = 0;  // Prvi čip (zgornji byte - biti 15-8)
+    uint8_t chip2 = 0;  // Drugi čip (spodnji byte - biti 7-0)
+    
+    // Onemogoči interrupts za stabilno SPI branje (prepreči UART motnje)
+    noInterrupts();
     
     // 1. Load pulse: LD LOW -> HIGH (naloži paralelne vhode v shift register)
     digitalWrite(SPI_LD, LOW);
-    delayMicroseconds(5);  // Load pulse width
+    delayMicroseconds(8);   // Load pulse width - optimizirano
     digitalWrite(SPI_LD, HIGH);
-    delayMicroseconds(2);  // Setup time
+    delayMicroseconds(5);   // Setup time
     
-    // 2. Shift 16 bitov ven (bit-banging)
-    for (int i = 0; i < 16; i++) {
-        // Preberi trenutni bit na MISO (MSB first)
-        if (digitalRead(SPI_MISO)) {
-            data |= (1 << (15 - i));  // MSB first: bit 15, 14, 13, ... 0
-        }
-        
-        // CLK pulse: LOW -> HIGH -> LOW
-        digitalWrite(SPI_CLK, HIGH);
-        delayMicroseconds(1);
+    // 2. Preberi PRVI ČIP (8 bitov) - biti 15-8
+    // Po LOAD je bit 7 že na MISO
+    chip1 |= (1 << 7) * digitalRead(SPI_MISO);  // Bit 7 (MSB)
+    
+    // CLK HIGH shifta naslednji bit na MISO, nato beremo
+    for (int i = 1; i < 8; i++) {
+        digitalWrite(SPI_CLK, HIGH);  // Rising edge shifta bit (7-i)
+        delayMicroseconds(3);         // Clock high time
+        chip1 |= (1 << (7 - i)) * digitalRead(SPI_MISO);  // Preberi bit 6,5,4,3,2,1,0
         digitalWrite(SPI_CLK, LOW);
-        delayMicroseconds(1);
+        delayMicroseconds(2);
+    }
+    
+    // 3. Preberi DRUGI ČIP (8 bitov) - biti 7-0
+    for (int i = 0; i < 8; i++) {
+        digitalWrite(SPI_CLK, HIGH);  // Rising edge shifta bit
+        delayMicroseconds(3);         // Clock high time
+        chip2 |= (1 << (7 - i)) * digitalRead(SPI_MISO);  // Preberi bit 7,6,5,4,3,2,1,0
+        digitalWrite(SPI_CLK, LOW);
+        delayMicroseconds(2);
+    }
+    
+    // Ponovno omogoči interrupts
+    interrupts();
+    
+    // 4. Združi oba čipa v 16-bitno vrednost
+    uint16_t data = ((uint16_t)chip1 << 8) | chip2;
+    
+    // DEBUG: Izpis posameznih čipov
+    static uint8_t lastChip1 = 0;
+    static uint8_t lastChip2 = 0;
+    if (chip1 != lastChip1 || chip2 != lastChip2) {
+        Serial.print("[SPI DEBUG] Chip1: 0x");
+        Serial.print(chip1, HEX);
+        Serial.print(" Chip2: 0x");
+        Serial.print(chip2, HEX);
+        Serial.print(" => 0x");
+        Serial.println(data, HEX);
+        lastChip1 = chip1;
+        lastChip2 = chip2;
     }
     
     return data;
@@ -94,11 +169,27 @@ void BrusInputs::update() {
     // Feed watchdog
     yield();
     
-    // Preberi vhode
-    lastInputState = inputState;
-    inputState = readSN65HVS882();
+    // Rate limiting - preberi vhode samo 10x/sekundo
+    unsigned long currentTime = millis();
+    if (currentTime - lastReadTime >= READ_INTERVAL_MS) {
+        lastReadTime = currentTime;
+        lastInputState = inputState;
+        inputState = readSN65HVS882();
+        
+        // ===== DEBUG: Izpis vhodov samo ob spremembi =====
+        if (inputState != lastInputState) {
+            Serial.print("[INPUTS DEBUG] 16-bit: ");
+            for (int i = 15; i >= 0; i--) {
+                Serial.print((inputState >> i) & 0x01);
+                if (i == 8) Serial.print(" ");  // Presledek med byte1 in byte2
+            }
+            Serial.print(" (0x");
+            Serial.print(inputState, HEX);
+            Serial.println(")");
+        }
+    }
     
-    // Posodobi AS5600 encoder
+    // Posodobi AS5600 encoder (vedno)
     angleEncoder->update();
     
     // Števec obratov - detekcija naraščajočega robu
@@ -110,23 +201,6 @@ void BrusInputs::update() {
     
     // Temperatura alarm (TOK signal je active-low: LOW=alarm, HIGH=OK)
     tempAlarm = !digitalRead(TEMP_ALARM);
-    
-    // ===== DEBUG: Izpis vhodov vsaki 2 sekundi =====
-    static unsigned long lastDebugPrint = 0;
-    if (millis() - lastDebugPrint >= 2000) {
-        lastDebugPrint = millis();
-        Serial.print("[INPUTS DEBUG] 16-bit: ");
-        for (int i = 15; i >= 0; i--) {
-            Serial.print((inputState >> i) & 0x01);
-            if (i == 8) Serial.print(" ");  // Presledek med byte1 in byte2
-        }
-        Serial.print(" (0x");
-        Serial.print(inputState, HEX);
-        Serial.print(") | Bit0=");
-        Serial.print(getInputBit(0));
-        Serial.print(" | IN_S43(bit0)=");
-        Serial.println(getInputBit(IN_S43_SAFETY));
-    }
 }
 
 // ===== STIKALO S1 - MODE =====

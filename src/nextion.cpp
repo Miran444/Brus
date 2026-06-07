@@ -914,30 +914,6 @@ void NextionDisplay::setPnevState(bool active) {
     }
 }
 
-void NextionDisplay::setSpindleStatus(bool moving, bool directionUp, uint8_t speed) {
-    if (moving != lastSpindleMoving) {
-        if (moving) {
-            if (directionUp) {
-                setText("tSpindle", "▲ GOR");
-                sendCommand("tSpindle.pco=2016");  // Zelena
-            } else {
-                setText("tSpindle", "▼ DOL");
-                sendCommand("tSpindle.pco=1024");  // Modra
-            }
-        } else {
-            setText("tSpindle", "STOP");
-            sendCommand("tSpindle.pco=33840");  // Rdeča
-        }
-        lastSpindleMoving = moving;
-    }
-    
-    // Hitrost - ZAČASNO ONEMOGOČENO (jSpeed objekt ne obstaja v HMI)
-    // if (speed != lastSpindleSpeed) {
-    //     setProgress("jSpeed", (speed * 100) / 255);  // Progress bar 0-100%
-    //     lastSpindleSpeed = speed;
-    // }
-}
-
 // ===== BRANJE DOGODKOV (deprecated - uporabi callback sistem) =====
 
 bool NextionDisplay::available() {

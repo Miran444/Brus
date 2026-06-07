@@ -385,6 +385,12 @@ void handleStringData(const String& data) {
     Serial.print("[hRocno] Hitrost ročno: ");
     Serial.print(speedRocno);
     Serial.println("%");
+    
+    // Posodobi text polje t1 (id=15) na strani 2
+    char buffer[8];
+    sprintf(buffer, "%d", speedRocno);
+    display.setText("t1", buffer);
+    
     saveSpeedsToPreferences();
     return;
   }
@@ -1039,73 +1045,68 @@ void loop() {
     }
   }
   
-  // Posodobi podatke na page3 (pgModeAUTO) vsake 0.5s
-  static unsigned long lastPage3Update = 0;
-  if (currentPage == 3 && (currentMillis - lastPage3Update >= 500)) {
-    lastPage3Update = currentMillis;
+  // Posodobi tPomik na page2 (pgModeMAN) in page3 (pgModeAUTO) vsake 0.5s
+  static unsigned long lastPageUpdate = 0;
+  if ((currentPage == 2 || currentPage == 3) && (currentMillis - lastPageUpdate >= 500)) {
+    lastPageUpdate = currentMillis;
     
-    // Posodobi tCikli - format "izvedeni/nastavljeni"
-    S2Cycles cycles = inputs.getS2Cycles();
-    char cikliText[20];
-    if (cycles == CYCLES_CONTINUOUS) {
-      sprintf(cikliText, "%d/∞", autoCycle.getCompletedCycles());
-    } else {
-      sprintf(cikliText, "%d/%d", autoCycle.getCompletedCycles(), (int)cycles);
-    }
-    display.setText("tCikli", cikliText);
-    
-    // Posodobi tPomik - status motorja vretena
+    // Posodobi tPomik - status motorja vretena (obstaja na page2 in page3)
     if (outputs.isSpindleMoving()) {
       if (outputs.getSpindleDirection() == SPINDLE_UP) {
         display.setText("tPomik", "GOR");
-        // Nastavi zeleno barvo
-        display.sendRawCommand("tPomik.pco=2016");  // Zelena
+        display.sendRawCommand("tPomik.pco=1024");  // Modra
       } else {
         display.setText("tPomik", "DOL");
-        // Nastavi zeleno barvo
-        display.sendRawCommand("tPomik.pco=2016");  // Zelena
+        display.sendRawCommand("tPomik.pco=1024");  // Modra
       }
     } else {
       display.setText("tPomik", "STOP");
-      // Nastavi rdečo barvo
       display.sendRawCommand("tPomik.pco=63488");  // Rdeča
     }
     
-    // Posodobi tKamen - status brusnega kamna
-    if (outputs.isGrindingMotorOn()) {
-      display.setText("tKamen", "RUN");
-      // Nastavi modro barvo
-      display.sendRawCommand("tKamen.pco=1024");  // Modra
-    } else {
-      display.setText("tKamen", "STOP");
-      // Nastavi rdečo barvo
-      display.sendRawCommand("tKamen.pco=63488");  // Rdeča
-    }
+    // Posodobi ostale podatke samo na page3 (pgModeAUTO)
+    if (currentPage == 3) {
+      // Posodobi tCikli - format "izvedeni/nastavljeni"
+      S2Cycles cycles = inputs.getS2Cycles();
+      char cikliText[20];
+      if (cycles == CYCLES_CONTINUOUS) {
+        sprintf(cikliText, "%d/∞", autoCycle.getCompletedCycles());
+      } else {
+        sprintf(cikliText, "%d/%d", autoCycle.getCompletedCycles(), (int)cycles);
+      }
+      display.setText("tCikli", cikliText);
     
-    // Posodobi tCilinder - status pnevmatskega cilindra
-    BrusOutputs::KnifeCylinderState cylinderState = outputs.getKnifeCylinderState();
-    if (cylinderState == BrusOutputs::KNIFE_MOVING_OUT) {
-      display.setText("tCilinder", "OUT");
-      // Nastavi modro barvo
-      display.sendRawCommand("tCilinder.pco=1024");  // Modra
-    } else if (cylinderState == BrusOutputs::KNIFE_MOVING_IN) {
-      display.setText("tCilinder", "IN");
-      // Nastavi modro barvo
-      display.sendRawCommand("tCilinder.pco=1024");  // Modra
-    } else {
-      display.setText("tCilinder", "STOP");
-      // Nastavi rdečo barvo
-      display.sendRawCommand("tCilinder.pco=63488");  // Rdeča
-    }
-    
-    // Preveri pogoje za bStart in posodobi tStatus_pg3
-    updateAutoModeReadiness();
-    
-    // Posodobi tekst gumba bStart glede na stanje cikla
-    if (autoCycle.isRunning()) {
-      display.setText("bStart", "STOP");
-    } else {
-      display.setText("bStart", "START");
+      // Posodobi tKamen - status brusnega kamna
+      if (outputs.isGrindingMotorOn()) {
+        display.setText("tKamen", "RUN");
+        display.sendRawCommand("tKamen.pco=1024");  // Modra
+      } else {
+        display.setText("tKamen", "STOP");
+        display.sendRawCommand("tKamen.pco=63488");  // Rdeča
+      }
+      
+      // Posodobi tCilinder - status pnevmatskega cilindra
+      BrusOutputs::KnifeCylinderState cylinderState = outputs.getKnifeCylinderState();
+      if (cylinderState == BrusOutputs::KNIFE_MOVING_OUT) {
+        display.setText("tCilinder", "OUT");
+        display.sendRawCommand("tCilinder.pco=1024");  // Modra
+      } else if (cylinderState == BrusOutputs::KNIFE_MOVING_IN) {
+        display.setText("tCilinder", "IN");
+        display.sendRawCommand("tCilinder.pco=1024");  // Modra
+      } else {
+        display.setText("tCilinder", "STOP");
+        display.sendRawCommand("tCilinder.pco=63488");  // Rdeča
+      }
+      
+      // Preveri pogoje za bStart in posodobi tStatus_pg3
+      updateAutoModeReadiness();
+      
+      // Posodobi tekst gumba bStart glede na stanje cikla
+      if (autoCycle.isRunning()) {
+        display.setText("bStart", "STOP");
+      } else {
+        display.setText("bStart", "START");
+      }
     }
   }
   
@@ -1280,12 +1281,8 @@ void loop() {
       }
     }
     
-    // V ROČNEM načinu motorji preko fizičnih tipk niso dovoljeni
-    // (samo preko Nextion gumbov bBrus/bPnev)
-    // Črpalka in nož ne smeta biti vklopljena v manual mode
-    if (outputs.isWaterPumpOn()) {
-      outputs.setWaterPump(false);
-    }
+    // V ROČNEM načinu motorji in vreteno se upravljajo ročno
+    // Črpalka deluje avtomatsko z motorjem brusa (setGrindingMotor)
     
     autoModeActive = false;
   }
@@ -1356,6 +1353,22 @@ void loop() {
     outputs.emergencyStop();
     autoCycle.stop();
     Serial.println("!!! TEMPERATURA ALARM - SISTEM USTAVLJEN !!!");
+  }
+  
+  // ===== PREVERJANJE NAPAK CILINDRA NOŽA =====
+  if (outputs.hasKnifeCylinderError()) {
+    // Cilinder ni dosegel končnega položaja v varnostnem času
+    if (pnevActive) {
+      pnevActive = false;
+      display.setPnevState(false);
+      Serial.print("!!! NAPAKA CILINDRA: ");
+      Serial.println(outputs.getKnifeCylinderError());
+      
+      // Prikaži napako na displayu če smo na page2
+      if (currentPage == 2) {
+        display.setText("tStatus_pg2", outputs.getKnifeCylinderError().c_str());
+      }
+    }
   }
   
   // ===== PERIODIČEN DEBUG IZPIS - samo ob spremembi =====
@@ -1475,12 +1488,7 @@ void loop() {
     //   outputs.isKnifePusherOn()
     // );
     
-    // Nextion - status vretena
-    display.setSpindleStatus(
-      outputs.isSpindleMoving(),
-      outputs.getSpindleDirection() == SPINDLE_UP,
-      outputs.getSpindleSpeed()
-    );
+    // Nextion - status vretena (tPomik) se posodablja zgoraj v page2/page3 sekciji
     
     // Nextion - alarmi
     // if (inputs.isTempAlarm()) {
@@ -2076,6 +2084,11 @@ void handlePageChange(uint8_t newPage) {
       
       // Naloži hitrost iz preferences
       display.setProgress("hRocno", speedRocno);
+      
+      // Prikaži vrednost sliderja v text polju t1
+      char buffer[8];
+      sprintf(buffer, "%d", speedRocno);
+      display.setText("t1", buffer);
       
       // Preveri pogoje in nastavi statusno sporočilo
       if (!anglesCalibrated) {

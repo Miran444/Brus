@@ -36,6 +36,13 @@ void BrusInputs::begin() {
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_FREQUENCY);
     
+    // Inicializacija AS5600 DIR pin (direction polarity)
+    // LOW (GND) = values increase clockwise (privzeto)
+    // HIGH (VDD) = values increase counterclockwise
+    pinMode(AS5600_DIR, OUTPUT);
+    digitalWrite(AS5600_DIR, LOW);  // Nastavi na GND (clockwise)
+    Serial.println("AS5600 DIR pin nastavljen na LOW (clockwise)");
+    
     // Inicializacija AS5600
     angleEncoder->begin(&Wire);
     

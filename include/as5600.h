@@ -67,8 +67,10 @@ public:
     // Status
     bool isSensorPresent() { return sensorPresent; }
     bool isMagnetDetected();        // Ali je magnet prisoten
-    uint8_t getMagnetStatus() { return magnetStatus; }
+    uint8_t getMagnetStatus();      // Prebere svež status register
     uint16_t getMagnetStrength();
+    uint8_t getAGC();               // Preberi AGC vrednost (0-128 @ 3.3V)
+    bool isMagnetOptimal();         // Ali je razdalja magneta optimalna
     
     // Debug
     void printStatus();

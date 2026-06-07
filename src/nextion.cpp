@@ -546,6 +546,21 @@ bool NextionDisplay::processUnifiedEvent() {
         }
         return true;
     }
+    else if (eventName == "DIR:") {
+        // DIR checkbox event (pgMagCal - page8)
+        if (valueCount >= 1) {
+            uint8_t dirValue = valueBytes[0];
+            Serial.print("[NEXTION] DIR event: ");
+            Serial.println(dirValue);
+            
+            // Pošlji kot string "DIR:x"
+            String data = "DIR:" + String(dirValue);
+            if (stringCallback) {
+                stringCallback(data);
+            }
+            return true;
+        }
+    }
     else {
         Serial.print("[NEXTION] Unknown unified event: '");
         Serial.print(eventName);
@@ -711,6 +726,11 @@ void NextionDisplay::setText(const char* obj, const char* text) {
     if (!displayReady) {
         return;  // Ignoriraj ukaze dokler display ni pripravljen
     }
+    // Serial.print("[NX->] ");
+    // Serial.print(obj);
+    // Serial.print(".txt=\"");
+    // Serial.print(text);
+    // Serial.println("\"");
     serial->print(obj);
     serial->print(".txt=\"");
     serial->print(text);
@@ -730,6 +750,10 @@ void NextionDisplay::setNumber(const char* obj, int32_t value) {
 
 void NextionDisplay::setProgress(const char* obj, int32_t value) {
     // Progress bar - vrednost 0-100
+    // Serial.print("[NX->] ");
+    // Serial.print(obj);
+    // Serial.print(".val=");
+    // Serial.println(value);
     serial->print(obj);
     serial->print(".val=");
     serial->print(value);
@@ -824,6 +848,9 @@ void NextionDisplay::setCycles(uint8_t current, uint8_t target) {
     }
 }
 
+// FUNKCIJA ZAKOMENTIRANA - tAngle objekt ne obstaja več na nobeni strani
+// Ta funkcija je povzročala 0x1A napake (Invalid variable/attribute)
+/*
 void NextionDisplay::setAngle(float angle) {
     if (abs(angle - lastAngle) > 0.1) {  // Posodobi samo če se spremeni za več kot 0.1°
         char buffer[16];
@@ -833,6 +860,7 @@ void NextionDisplay::setAngle(float angle) {
         lastAngle = angle;
     }
 }
+*/
 
 void NextionDisplay::setAngleRange(float angleStart, float angleStop) {
     if (abs(angleStart - lastAngleStart) > 0.1) {

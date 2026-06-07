@@ -51,9 +51,24 @@ uint8_t AS5600::readRegister8(uint8_t reg) {
 }
 
 uint16_t AS5600::readRegister16(uint8_t regH, uint8_t regL) {
-    uint8_t highByte = readRegister8(regH);
-    uint8_t lowByte = readRegister8(regL);
-    return (highByte << 8) | lowByte;
+    // POMEMBNO: Preberi oba byte-a v ENI I2C transakciji!
+    // Če preberemo v dveh ločenih transakcijah, se lahko register posodobi vmes
+    // in dobimo "glitch" (HIGH byte od enega odčitka, LOW byte od drugega)
+    
+    wire->beginTransmission(i2cAddress);
+    wire->write(regH);  // Nastavi naslov na HIGH byte
+    wire->endTransmission(false);  // false = repeated start (ne spusti vodila)
+    
+    // Preberi 2 byte-a naenkrat (HIGH in LOW)
+    wire->requestFrom(i2cAddress, (uint8_t)2);
+    
+    if (wire->available() >= 2) {
+        uint8_t highByte = wire->read();
+        uint8_t lowByte = wire->read();
+        return (highByte << 8) | lowByte;
+    }
+    
+    return 0;  // Napaka pri branju
 }
 
 uint16_t AS5600::readRawAngle() {
@@ -163,6 +178,30 @@ uint16_t AS5600::getMagnetStrength() {
     return readRegister16(AS5600_MAGNITUDE_H, AS5600_MAGNITUDE_L);
 }
 
+uint8_t AS5600::getAGC() {
+    if (!sensorPresent) return 0;
+    return readRegister8(AS5600_AGC);
+}
+
+uint8_t AS5600::getMagnetStatus() {
+    if (!sensorPresent) return 0;
+    return readRegister8(AS5600_STATUS);
+}
+
+bool AS5600::isMagnetOptimal() {
+    if (!sensorPresent) return false;
+    
+    // Preveri status register
+    if (!(magnetStatus & 0x20)) return false;  // Magnet ni zaznan
+    if (magnetStatus & 0x08) return false;      // Magnet premočen
+    if (magnetStatus & 0x10) return false;      // Magnet prešibek
+    
+    // Preveri AGC vrednost - optimalno je okoli 64 (sredina 0-128 @ 3.3V)
+    uint8_t agc = getAGC();
+    // Toleranca: 48-80 (64 ± 16)
+    return (agc >= 48 && agc <= 80);
+}
+
 void AS5600::printStatus() {
     Serial.println("--- AS5600 STATUS ---");
     Serial.print("Prisoten: ");
@@ -172,14 +211,27 @@ void AS5600::printStatus() {
     
     Serial.print("Magnet: ");
     if (magnetStatus & 0x08) {
-        Serial.println("PREŠIBEK");
+        Serial.println("PREMOCEN");  // MH - bit 3, magnet too strong
     } else if (magnetStatus & 0x10) {
-        Serial.println("PREMOČEN");
+        Serial.println("PRESIBEK");  // ML - bit 4, magnet too weak
     } else if (magnetStatus & 0x20) {
-        Serial.println("OK");
+        Serial.println("OK");  // MD - bit 5, magnet detected
     } else {
         Serial.println("NI ZAZNAN");
     }
+    
+    uint8_t agc = getAGC();
+    Serial.print("AGC: ");
+    Serial.print(agc);
+    Serial.print("/128 [");
+    if (agc < 48) {
+        Serial.print("PREMOCEN - oddaljite magnet");
+    } else if (agc > 80) {
+        Serial.print("PRESIBEK - priblizajte magnet");
+    } else {
+        Serial.print("OPTIMAL");
+    }
+    Serial.println("]");
     
     Serial.print("Moč signala: ");
     Serial.println(getMagnetStrength());

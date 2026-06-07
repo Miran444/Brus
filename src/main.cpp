@@ -18,6 +18,8 @@ Preferences preferences;
 // Časovniki
 unsigned long lastPrintTime = 0;
 const unsigned long PRINT_INTERVAL = 1000; // Izpis vsako sekundo
+unsigned long lastMagnetCalUpdate = 0;
+const unsigned long MAGNET_CAL_UPDATE_INTERVAL = 300;  // Osvežitev kalibracije magneta vsakih 0.3s (debug)
 
 // Power monitoring - Detekcija napajanja iz usmernika
 bool powerPresent = false;          // Ali je napajanje iz usmernika prisotno
@@ -52,6 +54,10 @@ uint8_t speedRocno = 80;    // Hitrost ročnega pomika
 
 // Referenčne vrednosti
 float revPerAngle = 0.0;    // Število obratov na stopinjo (iz kalibracije)
+
+// AS5600 nastavitve (pgMagCal - page8)
+bool as5600DirCW = true;     // true=CW (clockwise), false=CCW (counterclockwise)
+float as5600AngleOffset = 0.0;  // Offset za prikazovanje kota (nastavi z bSetZero)
 
 // ===== PAGE MANAGEMENT - NOVA STRUKTURA =====
 // page0: pgIntro (startup, 5s timeout)
@@ -114,6 +120,8 @@ uint32_t lastRevCount = 0;
 
 // Deklaracije funkcij
 void handleTouchPress(uint8_t componentId);
+void updateMagnetCalibrationDisplay();
+float getDisplayAngle();  // Izračuna prikazani kot z upoštevanjem offseta
 
 // ===== POWER MONITORING FUNCTIONS =====
 /**
@@ -268,6 +276,11 @@ void setup() {
   // Inicializacija vhodov
   inputs.begin();
   
+  // Nastavi AS5600 DIR pin iz Preferences (po inputs.begin, ki je že inicializiral pin)
+  digitalWrite(AS5600_DIR, as5600DirCW ? LOW : HIGH);
+  Serial.print("[SETUP] AS5600 DIR iz Preferences: ");
+  Serial.println(as5600DirCW ? "CW" : "CCW");
+  
   // Poveži inputs z outputs za kontrolo cilindra
   outputs.setInputs(&inputs);
   
@@ -372,6 +385,27 @@ void handleStringData(const String& data) {
     Serial.print("[PAGE] Event: ");
     Serial.println(newPage);
     handlePageChange(newPage);
+    return;
+  }
+  
+  // DIR checkbox event (page8 - pgMagCal)
+  if (data.startsWith("DIR:")) {
+    int dirValue = data.substring(4).toInt();
+    as5600DirCW = (dirValue == 0);  // 0=CW, 1=CCW
+    
+    // Posodobi DIR pin
+    digitalWrite(AS5600_DIR, as5600DirCW ? LOW : HIGH);
+    
+    // Shrani v Preferences
+    preferences.begin("brus", false);
+    preferences.putBool("as5600DirCW", as5600DirCW);
+    preferences.end();
+    
+    Serial.print("[DIR] AS5600 smer nastavljena na: ");
+    Serial.println(as5600DirCW ? "CW (clockwise)" : "CCW (counterclockwise)");
+    
+    // Posodobi prikaz
+    updateMagnetCalibrationDisplay();
     return;
   }
   
@@ -759,6 +793,34 @@ void handleTouchPress(uint8_t componentId) {
         break;
     }
   }
+  // ===== PAGE 8 - pgMagCal (KALIBRACIJA MAGNETA) =====
+  else if (currentPage == 8) {
+    switch(componentId) {
+      case 12:  // bSetZero - nastavi trenutni kot kot referenco (0°)
+        Serial.println("[bSetZero] Nastavljam trenutni kot kot referenco (0°)");
+        
+        // Shrani trenutni kot kot offset
+        as5600AngleOffset = inputs.getAngleEncoder()->getAngle();
+        
+        // Shrani v Preferences
+        preferences.begin("brus", false);
+        preferences.putFloat("as5600Offset", as5600AngleOffset);
+        preferences.end();
+        
+        Serial.print("[bSetZero] Offset nastavljen na: ");
+        Serial.print(as5600AngleOffset, 1);
+        Serial.println("°");
+        
+        // Posodobi prikaz - xAngle bo pokazal 0.0°
+        updateMagnetCalibrationDisplay();
+        break;
+        
+      default:
+        Serial.print("Neznan gumb ID na page8: ");
+        Serial.println(componentId);
+        break;
+    }
+  }
   // ===== PAGE 1 - pgModeOFF =====
   else if (currentPage == 1) {
     switch(componentId) {
@@ -1001,20 +1063,28 @@ void loop() {
   // Posodobi izhode (kontrola cilindra)
   outputs.update();
   
-  // Posodobi AS5600 senzor
-  angleSensor.update();
+  // TEST: Posodobi AS5600 senzor vsakih 300ms
+  static unsigned long lastSensorUpdate = 0;
+  static float lastDisplayedAngle = -999.0;
+  static unsigned long lastAngleUpdate = 0;
   
-  // Posodobi prikaz kota xAngle na stranih ki ga imajo (1,2,3,5,7) - samo ob spremembi
-  if (currentPage == 1 || currentPage == 2 || currentPage == 3 || currentPage == 5 || currentPage == 7) {
-    static float lastDisplayedAngle = -999.0;
-    static unsigned long lastAngleUpdate = 0;
-    float currentAngle = angleSensor.getCalibratedAngle();
+  if (currentMillis - lastSensorUpdate >= 300) {
+    lastSensorUpdate = currentMillis;
     
-    // Posodobi če: 1) Sprememba >1.0° ALI 2) Vsake 10s (backup)
-    if (abs(currentAngle - lastDisplayedAngle) > 1.0 || 
-        (currentMillis - lastAngleUpdate > 10000)) {
-      setXFloatValue("xAngle", currentAngle);  // Uporabi helper za pravilno nastavitev vvs0
-      lastDisplayedAngle = currentAngle;
+    // Preberi senzor
+    angleSensor.update();
+    
+    // Posodobi prikaz kota xAngle na stranih ki ga imajo (1,2,3,5,7)
+    if (currentPage == 1 || currentPage == 2 || currentPage == 3 || currentPage == 5 || currentPage == 7) {
+      float displayAngle = getDisplayAngle();
+      
+      // Vedno posodobi display ob vsakem branju (vsakih 300ms)
+      // Serial.print("[TEST 300ms] AS5600 prikazani kot: ");
+      // Serial.print(displayAngle, 1);
+      // Serial.println("°");
+      
+      setXFloatValue("xAngle", displayAngle);
+      lastDisplayedAngle = displayAngle;
       lastAngleUpdate = currentMillis;
     }
   }
@@ -1161,6 +1231,14 @@ void loop() {
   
   // Posodobi Nextion display (vključuje obdelavo vseh dogodkov preko callbackov)
   display.update(currentMillis);
+  
+  // ===== PAGE 8 - Avtomatska osvežitev kalibracije magneta =====
+  if (currentPage == 8) {
+    if (currentMillis - lastMagnetCalUpdate >= MAGNET_CAL_UPDATE_INTERVAL) {
+      updateMagnetCalibrationDisplay();
+      lastMagnetCalUpdate = currentMillis;
+    }
+  }
   
   // Trenutni način delovanja
   S1Mode mode = inputs.getS1Mode();
@@ -1473,9 +1551,11 @@ void loop() {
         display.setCycles(0, cycles);
       }
       
-      if (USE_AS5600_FOR_TILT && inputs.getAngleEncoder()->isSensorPresent()) {
-        display.setAngle(inputs.getSpindleAngle());
-      }
+      // OPOMBA: tAngle objekt ne obstaja več na nobeni strani
+      // setAngle() funkcija zakomentirana
+      // if (USE_AS5600_FOR_TILT && inputs.getAngleEncoder()->isSensorPresent()) {
+      //   display.setAngle(inputs.getSpindleAngle());
+      // }
     }
     
     // Nextion - število obratov
@@ -1514,6 +1594,10 @@ void loadAnglesFromPreferences() {
   // Naloži kalibrirane min/max kote iz referenčnega hoda
   calibratedMinAngle = preferences.getFloat("minAngle", 0.0);
   calibratedMaxAngle = preferences.getFloat("maxAngle", 0.0);
+  
+  // Naloži AS5600 nastavitve
+  as5600DirCW = preferences.getBool("as5600DirCW", true);  // Privzeto CW
+  as5600AngleOffset = preferences.getFloat("as5600Offset", 0.0);
   
   preferences.end();
   
@@ -1641,6 +1725,25 @@ uint8_t speedToPWM(uint8_t percent) {
   return pwm;
 }
 
+/**
+ * @brief Izračuna prikazani kot z upoštevanjem as5600AngleOffset
+ * 
+ * Uporaba: Ko uporabnik nastavi referenco (bSetZero), se trenutni kot shrani
+ * kot offset. Vsi prikazi xAngle nato prikažejo kot relativno glede na to referenco.
+ * 
+ * @return Kot v stopinjah (0-360°) z upoštevanjem offseta
+ */
+float getDisplayAngle() {
+  float rawAngle = angleSensor.getAngle();
+  float displayAngle = rawAngle - as5600AngleOffset;
+  
+  // Normalizacija na 0-360°
+  if (displayAngle < 0) displayAngle += 360.0;
+  else if (displayAngle >= 360.0) displayAngle -= 360.0;
+  
+  return displayAngle;
+}
+
 void setXFloatValue(const char* objName, float value) {
   // Helper funkcija za pošiljanje xFloat vrednosti z avtomatskim nastavitvijo vvs0
   // vvs0 določa število številk pred decimalno vejico, da se izognemo vodilnim ničlam
@@ -1681,8 +1784,92 @@ void setXFloatValue(const char* objName, float value) {
     
     lastDebugValue = value;
     strncpy(lastDebugName, objName, sizeof(lastDebugName) - 1);
-    lastDebugName[sizeof(lastDebugName) - 1] = '\0';
+        lastDebugName[sizeof(lastDebugName) - 1] = '\0';
   }
+}
+
+/**
+ * @brief Posodobi prikaz kalibracije magneta na strani pgMagCal (page8)
+ * 
+ * Prebere AGC in Status register ter posodobi vse elemente:
+ * - tCalStatus: Glavni status (PREVERJANJE/OPTIMAL/PREMOČEN/PREŠIBEK)
+ * - tAGC: AGC vrednost (0-128)
+ * - jAGC: Progress bar (0-100, pretvorjeno iz AGC 0-128)
+ * - tMagStatus: Status magneta (OPTIMAL/PREMOČEN/PREŠIBEK/NI ZAZNAN)
+ */
+void updateMagnetCalibrationDisplay() {
+  // Preveri če je senzor prisoten
+  if (!angleSensor.isSensorPresent()) {
+    display.setText("tStatus_pg8", "AS5600 NI ZAZNAN!");
+    display.setText("tAGC", "--");
+    display.setProgress("jAGC", 0);
+    display.setText("tMagStatus", "NI ZAZNAN");
+    display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+    setXFloatValue("xAngle", 0.0);
+    return;
+  }
+  
+  // Preberi AGC in Status
+  uint8_t agc = angleSensor.getAGC();
+  uint8_t status = angleSensor.getMagnetStatus();
+  
+  // Serial.print("[MAGCAL] AGC=");
+  // Serial.print(agc);
+  // Serial.print(", Status=0x");
+  // Serial.println(status, HEX);
+  
+  // Posodobi AGC številko
+  char agcStr[8];
+  sprintf(agcStr, "%d", agc);
+  display.setText("tAGC", agcStr);
+  
+  // Posodobi progress bar (AGC je 0-128, progress bar je 0-100)
+  uint8_t progressValue = (agc * 100) / 128;
+  display.setProgress("jAGC", progressValue);
+  
+  // Posodobi xAngle - prikazuje kot z upoštevanjem offseta
+  float rawAngle = angleSensor.getAngle();
+  float displayAngle = rawAngle - as5600AngleOffset;
+  // Normalizacija na 0-360°
+  if (displayAngle < 0) displayAngle += 360.0;
+  else if (displayAngle >= 360.0) displayAngle -= 360.0;
+  setXFloatValue("xAngle", displayAngle);
+  
+  // Posodobi status magneta iz Status registra
+  // POMEMBNO: Preveri bite po prioriteti (MH in ML lahko prekrijeta MD)
+  const char* magStatus = "NEZNAN";
+  if (status & 0x08) {
+    // Bit 3 (MH) - magnet too strong
+    magStatus = "PREMOCEN";
+    display.setText("tMagStatus", magStatus);
+    display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+  } else if (status & 0x10) {
+    // Bit 4 (ML) - magnet too weak
+    magStatus = "PRESIBEK";
+    display.setText("tMagStatus", magStatus);
+    display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+  } else if (status & 0x20) {
+    // Bit 5 (MD) - magnet detected
+    magStatus = "OPTIMAL";
+    display.setText("tMagStatus", magStatus);
+    display.sendRawCommand("tMagStatus.pco=31");   // Modra
+  } else {
+    magStatus = "NI ZAZNAN";
+    display.setText("tMagStatus", magStatus);
+    display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+  }
+  
+  // Posodobi glavni status glede na AGC vrednost
+  // Optimalno območje: 48-80 (64 ± 16 pri 3.3V)
+  const char* calStatus = "";
+  if (agc < 48) {
+    calStatus = "Magnet PREMOCEN - oddaljite!";
+  } else if (agc <= 80) {
+    calStatus = "Razdalja OPTIMALNA!";
+  } else {
+    calStatus = "Magnet PRESIBEK - priblizajte!";
+  }
+  display.setText("tStatus_pg8", calStatus);
 }
 
 void processSavedAngles() {
@@ -2041,8 +2228,8 @@ void handlePageChange(uint8_t newPage) {
       Serial.println("  -> pgModeOFF (osnovna stran)");
       
       // Najprej pošlji trenutni kot xAngle (ostala xFloat polja se naložijo iz globalnih spr.)
-      float currentAngle = angleSensor.getCalibratedAngle();
-      setXFloatValue("xAngle", currentAngle);
+      float displayAngle = getDisplayAngle();
+      setXFloatValue("xAngle", displayAngle);
       
       // Preveri pogoje in nastavi statusno sporočilo
       String statusMsg = "";
@@ -2079,8 +2266,8 @@ void handlePageChange(uint8_t newPage) {
       Serial.println("  -> pgModeMAN (ročni način)");
       
       // Najprej pošlji trenutni kot xAngle (ostala xFloat polja se naložijo iz globalnih spr.)
-      float currentAngle = angleSensor.getCalibratedAngle();
-      setXFloatValue("xAngle", currentAngle);
+      float displayAngle = getDisplayAngle();
+      setXFloatValue("xAngle", displayAngle);
       
       // Naloži hitrost iz preferences
       display.setProgress("hRocno", speedRocno);
@@ -2103,8 +2290,8 @@ void handlePageChange(uint8_t newPage) {
       Serial.println("  -> pgModeAUTO (avtomatski način)");
       
       // Najprej pošlji trenutni kot xAngle
-      float currentAngle = angleSensor.getCalibratedAngle();
-      setXFloatValue("xAngle", currentAngle);
+      float displayAngle = getDisplayAngle();
+      setXFloatValue("xAngle", displayAngle);
       
       // Naloži hitrost - uporablja se speedSredina
       display.setNumber("nSpeed", (int32_t)(speedSredina));  // Number - brez *10
@@ -2140,8 +2327,8 @@ void handlePageChange(uint8_t newPage) {
       Serial.println("  -> pgRef (referenčni hod)");
       
       // Najprej pošlji trenutni kot xAngle
-      float currentAngle = angleSensor.getCalibratedAngle();
-      setXFloatValue("xAngle", currentAngle);
+      float displayAngle = getDisplayAngle();
+      setXFloatValue("xAngle", displayAngle);
       
       // Resetiraj stanje referenčnega hoda (samo če ni že aktiven)
       if (refState == REF_IDLE) {
@@ -2164,7 +2351,9 @@ void handlePageChange(uint8_t newPage) {
       }
       
       // Preveri ali je kot v mejah (0-30°) za omogočitev bRefStart
-      bool angleInRange = (currentAngle >= 0.0 && currentAngle <= 30.0);
+      // Ponovno preberi displayAngle (lahko se je spremenil)
+      displayAngle = getDisplayAngle();
+      bool angleInRange = (displayAngle >= 0.0 && displayAngle <= 30.0);
       display.setButtonState("bRefStart", angleInRange && refState == REF_IDLE);
       
       // Nastavi tekst gumba bRefStart glede na stanje
@@ -2197,8 +2386,8 @@ void handlePageChange(uint8_t newPage) {
       Serial.println("  -> pgAngle (nastavitev kotov)");
       
       // Najprej pošlji trenutni kot xAngle
-      float currentAngle = angleSensor.getCalibratedAngle();
-      setXFloatValue("xAngle", currentAngle);
+      float displayAngle = getDisplayAngle();
+      setXFloatValue("xAngle", displayAngle);
       
       // xMinAngle, xMaxAngle, xStartAngle, xStopAngle se naložijo avtomatsko iz globalnih spr.
       
@@ -2212,6 +2401,31 @@ void handlePageChange(uint8_t newPage) {
       
       // Status
       display.setText("tStatus_pg7", "Uporabite gumb [Nastavi] za nastavitev kotov");
+      break;
+    }
+    
+    case 8: { // pgMagCal (kalibracija magneta)
+      Serial.println("  -> pgMagCal (kalibracija magneta AS5600)");
+      
+      // Začetno stanje - preverjanje
+      display.setText("tStatus_pg8", "Razdalja magneta: PREVERJANJE...");
+      
+      // Posodobi DIR checkbox stanje
+      display.setNumber("cDir", as5600DirCW ? 0 : 1);  // 0=CW, 1=CCW
+      
+      // Posodobi prikaz
+      updateMagnetCalibrationDisplay();
+      
+      // Izpiši status senzorja (enkrat ob preklopu)
+      angleSensor.printStatus();
+      
+      // Resetiraj časovnik za avtomatsko osvežitev
+      lastMagnetCalUpdate = millis();
+      
+      Serial.println("  -> Stran aktivna: AGC vrednost se osveža vsakih 3s");
+      Serial.println("  -> Optimalno območje: AGC 48-80 (64 ± 16)");
+      Serial.print("  -> AS5600 DIR: ");
+      Serial.println(as5600DirCW ? "CW (clockwise)" : "CCW (counterclockwise)");
       break;
     }
   }

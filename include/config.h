@@ -58,6 +58,7 @@ enum S2Cycles {
 #define I2C_SDA         8       // GPIO8 - SDA
 #define I2C_SCL         9       // GPIO9 - SCL
 #define I2C_FREQUENCY   400000  // 400 kHz (fast mode)
+#define AS5600_DIR      15      // GPIO15 - DIR pin (GND=CW, VDD=CCW)
 
 // ===== AS5600 NASTAVITVE =====
 #define AS5600_ADDRESS      0x36    // I2C adresa AS5600

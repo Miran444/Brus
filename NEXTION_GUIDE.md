@@ -1074,4 +1074,266 @@ Za prikaz oznak pri slajderjih:
 
 ---
 
+## PAGE 2 - KALIBRACIJA MAGNETA AS5600
+
+**Namen:** Kalibracija razdalje magneta od AS5600 senzorja z uporabo AGC (Automatic Gain Control) registra in Status registra.
+
+### Ozadje - AGC Register
+
+AS5600 uporablja Automatic Gain Control za kompenzacijo sprememb magnetnega polja zaradi:
+- Sprememb temperature
+- Razdalje (airgap) med IC-jem in magnetom
+- Degradacije magneta
+
+**AGC vrednosti:**
+- Pri 3.3V delovanje: **0-128**
+- Optimalna vrednost: **64** (sredina razpona)
+- Priporočen razpon: **32-96** (64 ± 32)
+
+**Status register biti:**
+- **Bit 3 (0x08)**: MH - Magnet too strong (prešibko ojačenje, magnet premočen)
+- **Bit 4 (0x10)**: ML - Magnet too weak (preveliko ojačenje, magnet prešibek)
+- **Bit 5 (0x20)**: MD - Magnet detected (magnet zaznan in v območju)
+
+### Komponente
+
+#### Text: tCalStatus (Status prikaz)
+- **objname**: `tCalStatus`
+- **id**: 30
+- **Position**: X=10, Y=10, W=460, H=60
+- **txt**: `Razdalja magneta: PREVERJANJE...`
+- **font**: size 2
+- **pco**: 65535 (bela)
+- **bco**: 1024 (modra)
+- **xcen**: 1
+- **ycen**: 1
+
+**Barve ozadja (ESP32 upravlja):**
+- **Modra (1024)**: Preverjanje/pripravljanje
+- **Rdeča (63488)**: Napaka - magnet premočen/prešibek/ni zaznan
+- **Zelena (2016)**: OK - optimalna razdalja
+
+#### Text: tAGC (AGC vrednost)
+- **objname**: `tAGC`
+- **id**: 31
+- **Position**: X=50, Y=100, W=180, H=80
+- **txt**: `--`
+- **font**: size 6
+- **pco**: 65535 (bela)
+- **bco**: 16448 (temno siva)
+- **xcen**: 1
+- **ycen**: 1
+
+**Format:** "64" (vrednost 0-128)
+
+#### Text: tAGC_Label
+- **Position**: X=50, Y=80, W=180, H=20
+- **txt**: `AGC vrednost`
+- **font**: size 1
+- **pco**: 50712 (svetlo siva)
+- **bco**: 16448
+
+#### Progress Bar: jAGC (Vizualni prikaz AGC)
+- **objname**: `jAGC`
+- **id**: 32
+- **Position**: X=250, Y=100, W=200, H=40
+- **minval**: 0
+- **maxval**: 128
+- **val**: 0
+- **bco**: 33840 (siva)
+- **pco**: 2016 (zelena)
+
+**Območja (ESP32 spreminja barvo):**
+- 0-31: Rdeča (magnet premočen)
+- 32-96: Zelena (optimalno)
+- 97-128: Rumena (magnet prešibek)
+
+#### Text: tMagStatus (Status magneta)
+- **objname**: `tMagStatus`
+- **id**: 33
+- **Position**: X=250, Y=150, W=200, H=40
+- **txt**: `--`
+- **font**: size 3
+- **pco**: 65535
+- **bco**: 16448
+- **xcen**: 1
+- **ycen**: 1
+
+**Možne vrednosti:**
+- "PREMOČEN" - rdeča barva (pco=63488)
+- "PREŠIBEK" - rumena barva (pco=65504)
+- "OPTIMAL" - zelena barva (pco=2016)
+- "NI ZAZNAN" - rdeča barva (pco=63488)
+
+#### Text: tInstruction (Navodila)
+- **objname**: `tInstruction`
+- **Position**: X=50, Y=200, W=380, H=80
+- **txt**: `Premikajte magnet bližje ali dlje od senzorja. Cilj je AGC vrednost okoli 64 (območje 32-96).`
+- **font**: size 2
+- **pco**: 50712 (svetlo siva)
+- **bco**: 16448
+- **xcen**: 0
+- **ycen**: 0
+- **wrap**: 1 (auto wrap text)
+
+#### Button: bRefresh (Osvežitev)
+- **objname**: `bRefresh`
+- **id**: 34
+- **Position**: X=50, Y=250, W=150, H=50
+- **txt**: `OSVEŽI`
+- **font**: size 2
+- **pco**: 65535
+- **bco**: 1024 (modra)
+- **Events**:
+  - Touch Press Event: ✓ (Send Component ID)
+
+**Namen:** Ročno osvežitev AGC vrednosti
+
+#### Button: bCal2_Back (Nazaj)
+- **objname**: `bCal2_Back`
+- **id**: 35
+- **Position**: X=250, Y=250, W=150, H=50
+- **txt**: `NAZAJ`
+- **font**: size 2
+- **pco**: 65535
+- **bco**: 50712 (siva)
+- **Events**:
+  - Touch Press Event: ✓ (Send Component ID)
+
+### Navigacija
+
+**Vstop na page2:**
+- Iz **page1** → dodajte gumb **bMagCal** (npr. id=25): `page 2`
+
+**Izhod iz page2:**
+- Pritisni gumb **bCal2_Back** (id=35) → nazaj na page1
+
+### Delovanje
+
+1. **Avtomatsko preverjanje:**
+   - Ob vstopu na page2, ESP32 avtomatsko začne preverjati AGC vrednost (vsakih 500ms)
+   - `tAGC` prikazuje trenutno AGC vrednost (0-128)
+   - `jAGC` progress bar vizualno prikazuje vrednost
+   - `tMagStatus` prikazuje status: PREMOČEN/PREŠIBEK/OPTIMAL/NI ZAZNAN
+
+2. **Prikaz statusa:**
+   ```
+   AGC < 32:  tCalStatus.txt="Magnet PREMO EN - oddaljite!"
+              tCalStatus.bco=63488 (rdeča)
+              jAGC.pco=63488 (rdeča)
+              
+   AGC 32-96: tCalStatus.txt="Razdalja OPTIMALNA!"
+              tCalStatus.bco=2016 (zelena)
+              jAGC.pco=2016 (zelena)
+              
+   AGC > 96:  tCalStatus.txt="Magnet PREŠIBEK - približajte!"
+              tCalStatus.bco=65504 (rumena)
+              jAGC.pco=65504 (rumena)
+              
+   Status & 0x08: tMagStatus.txt="PREMOČEN", pco=63488
+   Status & 0x10: tMagStatus.txt="PREŠIBEK", pco=65504
+   Status & 0x20: tMagStatus.txt="OPTIMAL", pco=2016
+   Else:          tMagStatus.txt="NI ZAZNAN", pco=63488
+   ```
+
+3. **Ročna osvežitev:**
+   - Pritisk na `bRefresh` takoj posodobi vse vrednosti
+   - Uporabno po premiku magneta
+
+4. **Postopek kalibracije:**
+   - Premikajte magnet (navzgor/navzdol ali dlje/bližje)
+   - Spremljajte AGC vrednost in status
+   - Cilj: **AGC ≈ 64**, status **OPTIMAL**
+   - Ko dosežete optimalno območje (32-96), magnet pritrdite
+   - Pritisnite **NAZAJ** za izhod
+
+### ESP32 implementacija (pseudokod)
+
+```cpp
+void updateMagnetCalibration() {
+    if (currentPage != 2) return;
+    
+    // Preberi AGC in Status
+    uint8_t agc = as5600.getAGC();
+    uint8_t status = as5600.getMagnetStatus();
+    
+    // Posodobi AGC prikaz
+    display.setNumber("tAGC", agc);
+    display.setValue("jAGC", agc);
+    
+    // Posodobi status magneta
+    if (status & 0x08) {
+        display.setText("tMagStatus", "PREMOČEN");
+        display.setTextColor("tMagStatus", 63488);  // rdeča
+    } else if (status & 0x10) {
+        display.setText("tMagStatus", "PREŠIBEK");
+        display.setTextColor("tMagStatus", 65504);  // rumena
+    } else if (status & 0x20) {
+        display.setText("tMagStatus", "OPTIMAL");
+        display.setTextColor("tMagStatus", 2016);   // zelena
+    } else {
+        display.setText("tMagStatus", "NI ZAZNAN");
+        display.setTextColor("tMagStatus", 63488);  // rdeča
+    }
+    
+    // Posodobi glavni status in barvo progress bara
+    if (agc < 32) {
+        display.setText("tCalStatus", "Magnet PREMOČEN - oddaljite!");
+        display.setBackColor("tCalStatus", 63488);   // rdeča
+        display.setProgressColor("jAGC", 63488);     // rdeča
+    } else if (agc <= 96) {
+        display.setText("tCalStatus", "Razdalja OPTIMALNA!");
+        display.setBackColor("tCalStatus", 2016);    // zelena
+        display.setProgressColor("jAGC", 2016);      // zelena
+    } else {
+        display.setText("tCalStatus", "Magnet PREŠIBEK - približajte!");
+        display.setBackColor("tCalStatus", 65504);   // rumena
+        display.setProgressColor("jAGC", 65504);     // rumena
+    }
+}
+
+// V loop() ali timer callback
+if (currentPage == 2 && (millis() - lastUpdate > 500)) {
+    updateMagnetCalibration();
+    lastUpdate = millis();
+}
+
+// Touch event handler
+if (buttonId == 34) {  // bRefresh
+    updateMagnetCalibration();
+}
+else if (buttonId == 35) {  // bCal2_Back
+    currentPage = 1;
+    display.sendCommand("page 1");
+}
+```
+
+### Pomembne opombe
+
+- **Avtomatsko osvežavanje**: Vsake 0.5 sekunde (priporočeno)
+- **Brez shranjevanja**: Kalibracija magneta je fizična - ni potrebno shraniti v NVS
+- **Optimalno delovanje**: AGC vrednost naj bo čim bližje 64
+- **Toleranca**: Območje 32-96 zagotavlja robustno delovanje
+- **Vpliv na natančnost**: Slabo kalibriran magnet (AGC izven območja) lahko povzroči:
+  - Manj natančne meritve kota
+  - Večji šum v meritvah
+  - Nestabilnost pri mejnih kotih
+
+### Dodajanje gumba na Page 1
+
+Na **page1** dodajte gumb za dostop do kalibracije magneta:
+
+#### Button: bMagCal
+- **objname**: `bMagCal`
+- **id**: 25
+- **Position**: X=10, Y=260, W=200, H=50
+- **txt**: `Magnet Cal`
+- **font**: size 2
+- **pco**: 65535
+- **bco**: 1024 (modra)
+- **Events**:
+  - Touch Release Event: `page 2`
+
+---
+
 Srečno s kreacijo HMI! Če boste imeli težave pri kateremkoli koraku, mi sporočite.

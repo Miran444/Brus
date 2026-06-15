@@ -183,6 +183,8 @@ void NextionDisplay::sendCommand(const char* cmd) {
     if (!displayReady) {
         return;  // Ignoriraj ukaze dokler display ni pripravljen
     }
+    // Serial.print("[NEXTION TX] ");  // DEBUG
+    // Serial.println(cmd);             // DEBUG
     serial->print(cmd);
     endCommand();
 }

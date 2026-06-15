@@ -68,6 +68,7 @@ float as5600AngleOffset = 0.0;  // Offset za prikazovanje kota (nastavi z bSetZe
 // page5: pgRef (referenčni hod)
 // page6: pgSpeed (hitrosti)
 // page7: pgAngle (koti)
+// page8: pgMagCal (kalibracija magneta AS5600)
 uint8_t currentPage = 0;  // Trenutna stran
 S1Mode lastS1Mode = MODE_OFF;
 
@@ -120,7 +121,7 @@ uint32_t lastRevCount = 0;
 
 // Deklaracije funkcij
 void handleTouchPress(uint8_t componentId);
-void updateMagnetCalibrationDisplay();
+void updateMagnetCalibrationDisplay(bool forceUpdate = false);
 float getDisplayAngle();  // Izračuna prikazani kot z upoštevanjem offseta
 
 // ===== POWER MONITORING FUNCTIONS =====
@@ -229,6 +230,8 @@ void updateBNastaviKoteText();
 void processSavedAngles();
 void updateAutoModeReadiness();
 void setXFloatValue(const char* objName, float value);
+void resetXFloatCache();  // Resetira cache ob spremembi strani
+void setNumberWithLength(const char* objName, int32_t value);  // Number z avtomatskim lenth atributom
 
 // ===== NEXTION CALLBACK FUNKCIJE =====
 void onNextionTouch(uint8_t pageId, uint8_t componentId, bool isPress) {
@@ -280,6 +283,10 @@ void setup() {
   digitalWrite(AS5600_DIR, as5600DirCW ? LOW : HIGH);
   Serial.print("[SETUP] AS5600 DIR iz Preferences: ");
   Serial.println(as5600DirCW ? "CW" : "CCW");
+  
+  // POMEMBNO: Počakaj da se AS5600 odzove na DIR spremembo
+  // AS5600 potrebuje nekaj časa (~10ms) da spremeni smer števanja
+  delay(20);
   
   // Poveži inputs z outputs za kontrolo cilindra
   outputs.setInputs(&inputs);
@@ -396,6 +403,9 @@ void handleStringData(const String& data) {
     // Posodobi DIR pin
     digitalWrite(AS5600_DIR, as5600DirCW ? LOW : HIGH);
     
+    // POMEMBNO: Počakaj da se AS5600 odzove na DIR spremembo
+    delay(20);
+    
     // Shrani v Preferences
     preferences.begin("brus", false);
     preferences.putBool("as5600DirCW", as5600DirCW);
@@ -404,8 +414,8 @@ void handleStringData(const String& data) {
     Serial.print("[DIR] AS5600 smer nastavljena na: ");
     Serial.println(as5600DirCW ? "CW (clockwise)" : "CCW (counterclockwise)");
     
-    // Posodobi prikaz
-    updateMagnetCalibrationDisplay();
+    // Posodobi prikaz (po delay-u ko je AS5600 že odzval)
+    updateMagnetCalibrationDisplay(false);
     return;
   }
   
@@ -812,7 +822,7 @@ void handleTouchPress(uint8_t componentId) {
         Serial.println("°");
         
         // Posodobi prikaz - xAngle bo pokazal 0.0°
-        updateMagnetCalibrationDisplay();
+        updateMagnetCalibrationDisplay(false);
         break;
         
       default:
@@ -982,7 +992,7 @@ void loop() {
     // Nadaljuj z normalnim delovanjem
   }
   
-  // ===== POWER MONITORING - Periodični debug izpis =====
+  // ===== POWER MONITORING  =====
   if (currentMillis - lastPowerCheck >= POWER_CHECK_INTERVAL) {
     lastPowerCheck = currentMillis;
     
@@ -1210,7 +1220,7 @@ void loop() {
       if (currentMillis - lastTimeUpdate >= 1000) {
         lastTimeUpdate = currentMillis;
         unsigned long elapsedSeconds = (currentMillis - refStartTime) / 1000;
-        display.setNumber("nCicleTime", (int32_t)elapsedSeconds);
+        setNumberWithLength("nCicleTime", (int32_t)elapsedSeconds);
       }
     } else if (refState == REF_IDLE) {
       // Če ref. hod ni aktiven, posodabljaj omogočenost bRefStart glede na kot
@@ -1235,7 +1245,7 @@ void loop() {
   // ===== PAGE 8 - Avtomatska osvežitev kalibracije magneta =====
   if (currentPage == 8) {
     if (currentMillis - lastMagnetCalUpdate >= MAGNET_CAL_UPDATE_INTERVAL) {
-      updateMagnetCalibrationDisplay();
+      updateMagnetCalibrationDisplay(false);
       lastMagnetCalUpdate = currentMillis;
     }
   }
@@ -1258,6 +1268,19 @@ void loop() {
       autoModeWarningShown = false;
     }
     
+    // Ob preklopu V MODE_OFF ustavi vse
+    if (mode == MODE_OFF && lastMode != MODE_OFF) {
+      if (outputs.isGrindingMotorOn() || outputs.isWaterPumpOn() || 
+          outputs.isKnifePusherOn() || outputs.isSpindleMoving()) {
+        Serial.println("[MODE_OFF] Preklop iz delovnega načina - ustavljam vse");
+        outputs.emergencyStop();
+      }
+      if (autoCycle.isRunning()) {
+        autoCycle.stop();
+      }
+      autoModeActive = false;
+    }
+    
     // Ob preklopu v AUTO način
     if (mode == MODE_AUTO && lastMode != MODE_AUTO) {
       // Če nismo na page3 (pgModeAUTO), pojdi na page3
@@ -1271,19 +1294,6 @@ void loop() {
     }
     
     lastMode = mode;
-  }
-  
-  // ===== NAČIN OFF =====
-  if (mode == MODE_OFF) {
-    // V OFF načinu vse ustavi
-    if (outputs.isGrindingMotorOn() || outputs.isWaterPumpOn() || 
-        outputs.isKnifePusherOn() || outputs.isSpindleMoving()) {
-      outputs.emergencyStop();
-    }
-    if (autoCycle.isRunning()) {
-      autoCycle.stop();
-    }
-    autoModeActive = false;
   }
   
   // ===== ROČNI NAČIN =====
@@ -1403,25 +1413,12 @@ void loop() {
     }
   }
   
-  // ===== RESET TIPKA =====
+  // ===== RESET TIPKA (EMERGENCY STOP) =====
   if (inputs.isResetPressed()) {
-    if (mode == MODE_MANUAL) {
-      // V ROČNEM načinu: briše shranjene kote
-      clearAnglesFromPreferences();
-      savedAngleStart = 0.0;
-      savedAngleStop = 0.0;
-      anglesConfigured = false;
-      
-      display.setAngleRange(0.0, 0.0);
-      
-      Serial.println("*** RESET - Koti izbrisani ***");
-      Serial.println("Nastavite nove kote z gumbom bSave na displayu.");
-    } else {
-      // V ostalih načinih: emergency stop
-      outputs.emergencyStop();
-      autoCycle.stop();
-      Serial.println("*** RESET - EMERGENCY STOP ***");
-    }
+    // Emergency stop v vseh načinih
+    outputs.emergencyStop();
+    autoCycle.stop();
+    Serial.println("*** RESET - EMERGENCY STOP ***");
     
     delay(500); // Debounce za tipko
   }
@@ -1748,6 +1745,46 @@ void setXFloatValue(const char* objName, float value) {
   // Helper funkcija za pošiljanje xFloat vrednosti z avtomatskim nastavitvijo vvs0
   // vvs0 določa število številk pred decimalno vejico, da se izognemo vodilnim ničlam
   
+  // Cache za xFloat objekte - preveri ali se je vrednost spremenila
+  struct XFloatCache {
+    char name[32];
+    float value;
+  };
+  static XFloatCache cache[10];  // Max 10 različnih xFloat objektov
+  static uint8_t cacheSize = 0;
+  
+  // Posebna vrednost za resetiranje cache (klic iz resetXFloatCache)
+  if (objName == nullptr) {
+    cacheSize = 0;
+    return;
+  }
+  
+  // Išči objekt v cache
+  int cacheIndex = -1;
+  for (uint8_t i = 0; i < cacheSize; i++) {
+    if (strcmp(cache[i].name, objName) == 0) {
+      cacheIndex = i;
+      break;
+    }
+  }
+  
+  // Preveri ali se je vrednost spremenila (>0.1°)
+  if (cacheIndex >= 0) {
+    if (abs(value - cache[cacheIndex].value) < 0.1) {
+      return;  // Vrednost se ni spremenila dovolj - ne pošiljaj
+    }
+    // Posodobi cache
+    cache[cacheIndex].value = value;
+  } else {
+    // Nov objekt - dodaj v cache
+    if (cacheSize < 10) {
+      strncpy(cache[cacheSize].name, objName, sizeof(cache[cacheSize].name) - 1);
+      cache[cacheSize].name[sizeof(cache[cacheSize].name) - 1] = '\0';
+      cache[cacheSize].value = value;
+      cacheSize++;
+    }
+  }
+  
   int32_t intValue = (int32_t)(value * 10);  // xFloat format (*10)
   
   // Določi vvs0 glede na velikost vrednosti
@@ -1767,25 +1804,98 @@ void setXFloatValue(const char* objName, float value) {
   // Pošlji vrednost
   display.setNumber(objName, intValue);
   
-  // Debug izpis samo ob spremembi vrednosti
-  static float lastDebugValue = -999.0;
-  static char lastDebugName[32] = "";
+  // Debug izpis
+  Serial.print("[xFloat] ");
+  Serial.print(objName);
+  Serial.print(" = ");
+  Serial.print(value, 1);
+  Serial.println("°");
+}
+
+void resetXFloatCache() {
+  // Resetira cache za xFloat objekte - uporablja se ob spremembi strani
+  // da se vrednosti ponovno pošljejo tudi če so enake kot prej
   
-  bool valueChanged = (abs(value - lastDebugValue) > 0.1) || (strcmp(objName, lastDebugName) != 0);
+  // Kliči setXFloatValue z nullptr da resetira cache
+  setXFloatValue(nullptr, 0.0);
   
-  if (valueChanged) {
-    Serial.print("[xFloat] ");
-    Serial.print(objName);
-    Serial.print(" = ");
-    Serial.print(value, 1);
-    Serial.print("° (vvs0=");
-    Serial.print(vvs0);
-    Serial.println(")");
-    
-    lastDebugValue = value;
-    strncpy(lastDebugName, objName, sizeof(lastDebugName) - 1);
-        lastDebugName[sizeof(lastDebugName) - 1] = '\0';
+  // Resetiraj tudi Number cache
+  setNumberWithLength(nullptr, 0);
+  
+  Serial.println("[xFloat] Cache resetiran - ob spremembi strani");
+}
+
+void setNumberWithLength(const char* objName, int32_t value) {
+  // Helper funkcija za pošiljanje Number vrednosti z avtomatskim nastavitvijo lenth atributa
+  // lenth določa število cifer za prikaz (podobno kot vvs0 pri xFloat)
+  
+  // Cache za Number objekte - preveri ali se je vrednost spremenila
+  struct NumberCache {
+    char name[32];
+    int32_t value;
+  };
+  static NumberCache cache[5];  // Max 5 različnih Number objektov z lenth
+  static uint8_t cacheSize = 0;
+  
+  // Posebna vrednost za resetiranje cache (klic iz resetXFloatCache)
+  if (objName == nullptr) {
+    cacheSize = 0;
+    return;
   }
+  
+  // Išči objekt v cache
+  int cacheIndex = -1;
+  for (uint8_t i = 0; i < cacheSize; i++) {
+    if (strcmp(cache[i].name, objName) == 0) {
+      cacheIndex = i;
+      break;
+    }
+  }
+  
+  // Preveri ali se je vrednost spremenila
+  if (cacheIndex >= 0) {
+    if (value == cache[cacheIndex].value) {
+      return;  // Vrednost se ni spremenila - ne pošiljaj
+    }
+    // Posodobi cache
+    cache[cacheIndex].value = value;
+  } else {
+    // Nov objekt - dodaj v cache
+    if (cacheSize < 5) {
+      strncpy(cache[cacheSize].name, objName, sizeof(cache[cacheSize].name) - 1);
+      cache[cacheSize].name[sizeof(cache[cacheSize].name) - 1] = '\0';
+      cache[cacheSize].value = value;
+      cacheSize++;
+    }
+  }
+  
+  // Določi lenth glede na število cifer
+  uint8_t lenth = 1;  // Privzeto 1 cifra (0-9)
+  
+  if (value >= 10 && value < 100) {
+    lenth = 2;  // 2 cifri (10-99)
+  } else if (value >= 100 && value < 1000) {
+    lenth = 3;  // 3 cifre (100-999)
+  } else if (value >= 1000) {
+    lenth = 4;  // 4 cifre (1000-9999)
+  }
+  
+  // Pošlji lenth atribut
+  char cmd[64];
+  snprintf(cmd, sizeof(cmd), "%s.lenth=%d", objName, lenth);
+  display.sendRawCommand(cmd);
+  
+  // Pošlji vrednost
+  display.setNumber(objName, value);
+  
+  // Debug izpis
+  Serial.print("[Number] ");
+  Serial.print(objName);
+  Serial.print(" = ");
+  Serial.print(value);
+  Serial.print(" (lenth=");
+  Serial.print(lenth);
+  Serial.println(")");
 }
 
 /**
@@ -1797,35 +1907,73 @@ void setXFloatValue(const char* objName, float value) {
  * - jAGC: Progress bar (0-100, pretvorjeno iz AGC 0-128)
  * - tMagStatus: Status magneta (OPTIMAL/PREMOČEN/PREŠIBEK/NI ZAZNAN)
  */
-void updateMagnetCalibrationDisplay() {
+void updateMagnetCalibrationDisplay(bool forceUpdate) {
+  // Cache za prikaze - pošiljaj samo ob spremembi
+  static uint8_t lastAGC = 255;  // Nemogoča vrednost za prvo pošiljanje
+  static uint8_t lastStatus = 255;
+  static bool lastSensorPresent = true;
+  
+  // Če je forceUpdate true, resetiraj cache da se vse ponovno pošlje
+  if (forceUpdate) {
+    lastAGC = 255;
+    lastStatus = 255;
+    lastSensorPresent = true;
+  }
+
   // Preveri če je senzor prisoten
-  if (!angleSensor.isSensorPresent()) {
-    display.setText("tStatus_pg8", "AS5600 NI ZAZNAN!");
-    display.setText("tAGC", "--");
-    display.setProgress("jAGC", 0);
-    display.setText("tMagStatus", "NI ZAZNAN");
-    display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
-    setXFloatValue("xAngle", 0.0);
+  bool sensorPresent = angleSensor.isSensorPresent();
+  if (!sensorPresent) {
+    if (lastSensorPresent) {  // Samo ob spremembi
+      display.setText("tStatus_pg8", "AS5600 NI ZAZNAN!");
+      display.setText("tAGC", "--");
+      display.setProgress("jAGC", 0);
+      display.setText("tMagStatus", "NI ZAZNAN");
+      display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+      setXFloatValue("xAngle", 0.0);
+      lastSensorPresent = false;
+    }
     return;
   }
+  lastSensorPresent = true;
   
   // Preberi AGC in Status
   uint8_t agc = angleSensor.getAGC();
   uint8_t status = angleSensor.getMagnetStatus();
   
-  // Serial.print("[MAGCAL] AGC=");
-  // Serial.print(agc);
-  // Serial.print(", Status=0x");
-  // Serial.println(status, HEX);
-  
-  // Posodobi AGC številko
-  char agcStr[8];
-  sprintf(agcStr, "%d", agc);
-  display.setText("tAGC", agcStr);
-  
-  // Posodobi progress bar (AGC je 0-128, progress bar je 0-100)
-  uint8_t progressValue = (agc * 100) / 128;
-  display.setProgress("jAGC", progressValue);
+  // Posodobi AGC samo če se je spremenil
+  if (agc != lastAGC) {
+    char agcStr[8];
+    sprintf(agcStr, "%d", agc);
+    display.setText("tAGC", agcStr);
+    
+    // Posodobi progress bar (AGC je 0-128, progress bar je 0-100)
+    uint8_t progressValue = (agc * 100) / 128;
+    display.setProgress("jAGC", progressValue);
+    
+    // Posodobi glavni status glede na AGC vrednost
+    // Optimalno območje: 48-80 (64 ± 16 pri 3.3V)
+    const char* calStatus = "";
+    const char* magStatus = "NEZNAN";
+    if (agc < 48) {
+      calStatus = "Magnet PREMOCEN - oddaljite!";
+      magStatus = "PREMOCEN";
+      display.setText("tMagStatus", magStatus);
+      display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+    } else if (agc <= 80) {
+      calStatus = "Razdalja OPTIMALNA!";
+      magStatus = "OPTIMAL";
+      display.setText("tMagStatus", magStatus);
+      display.sendRawCommand("tMagStatus.pco=31");   // Modra
+    } else {
+      calStatus = "Magnet PRESIBEK - priblizajte!";
+      magStatus = "PRESIBEK";
+      display.setText("tMagStatus", magStatus);
+      display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+    }
+    display.setText("tStatus_pg8", calStatus);
+    
+    lastAGC = agc;
+  }
   
   // Posodobi xAngle - prikazuje kot z upoštevanjem offseta
   float rawAngle = angleSensor.getAngle();
@@ -1835,41 +1983,55 @@ void updateMagnetCalibrationDisplay() {
   else if (displayAngle >= 360.0) displayAngle -= 360.0;
   setXFloatValue("xAngle", displayAngle);
   
-  // Posodobi status magneta iz Status registra
-  // POMEMBNO: Preveri bite po prioriteti (MH in ML lahko prekrijeta MD)
-  const char* magStatus = "NEZNAN";
-  if (status & 0x08) {
-    // Bit 3 (MH) - magnet too strong
-    magStatus = "PREMOCEN";
-    display.setText("tMagStatus", magStatus);
-    display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
-  } else if (status & 0x10) {
-    // Bit 4 (ML) - magnet too weak
-    magStatus = "PRESIBEK";
-    display.setText("tMagStatus", magStatus);
-    display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
-  } else if (status & 0x20) {
-    // Bit 5 (MD) - magnet detected
-    magStatus = "OPTIMAL";
-    display.setText("tMagStatus", magStatus);
-    display.sendRawCommand("tMagStatus.pco=31");   // Modra
-  } else {
-    magStatus = "NI ZAZNAN";
-    display.setText("tMagStatus", magStatus);
-    display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
-  }
-  
-  // Posodobi glavni status glede na AGC vrednost
-  // Optimalno območje: 48-80 (64 ± 16 pri 3.3V)
-  const char* calStatus = "";
-  if (agc < 48) {
-    calStatus = "Magnet PREMOCEN - oddaljite!";
-  } else if (agc <= 80) {
-    calStatus = "Razdalja OPTIMALNA!";
-  } else {
-    calStatus = "Magnet PRESIBEK - priblizajte!";
-  }
-  display.setText("tStatus_pg8", calStatus);
+  // Posodobi status magneta samo če se je status spremenil
+  // if (status != lastStatus) {
+  //   // POMEMBNO: Preveri bite po prioriteti (MH in ML sta prisotni samo ko je MD=1)
+  //   const char* magStatus = "NEZNAN";
+  //   if (status & 0x20) {
+  //     // Bit 5 (MD) - magnet detected
+  //     magStatus = "OPTIMAL";
+  //     display.setText("tMagStatus", magStatus);
+  //     display.sendRawCommand("tMagStatus.pco=31");   // Modra
+  //     if (status & 0x08) {
+  //       // Bit 3 (MH) - magnet too strong
+  //       magStatus = "PREMOCEN";
+  //       display.setText("tMagStatus", magStatus);
+  //       display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+  //     } else if (status & 0x10) {
+  //       // Bit 4 (ML) - magnet too weak
+  //       magStatus = "PRESIBEK";
+  //       display.setText("tMagStatus", magStatus);
+  //       display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+  //     }      
+  //   } else {
+  //     magStatus = "NI ZAZNAN";
+  //     display.setText("tMagStatus", magStatus);
+  //     display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+  //   }
+
+    // if (status & 0x08) {
+    //   // Bit 3 (MH) - magnet too strong
+    //   magStatus = "PREMOCEN";
+    //   display.setText("tMagStatus", magStatus);
+    //   display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+    // } else if (status & 0x10) {
+    //   // Bit 4 (ML) - magnet too weak
+    //   magStatus = "PRESIBEK";
+    //   display.setText("tMagStatus", magStatus);
+    //   display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+    // } else if (status & 0x20) {
+    //   // Bit 5 (MD) - magnet detected
+    //   magStatus = "OPTIMAL";
+    //   display.setText("tMagStatus", magStatus);
+    //   display.sendRawCommand("tMagStatus.pco=31");   // Modra
+    // } else {
+    //   magStatus = "NI ZAZNAN";
+    //   display.setText("tMagStatus", magStatus);
+    //   display.sendRawCommand("tMagStatus.pco=63488");  // Rdeča
+    // }
+    
+  //   lastStatus = status;
+  // }
 }
 
 void processSavedAngles() {
@@ -2017,8 +2179,8 @@ void startReferenceRun() {
   outputs.moveSpindleDown(pwmSpeed);
   
   // Posodobi display page5 (pgRef)
-  display.setNumber("nObrati", 0);
-  display.setNumber("nCicleTime", 0);
+  setNumberWithLength("nObrati", 0);
+  setNumberWithLength("nCicleTime", 0);
   display.setNumber("xRevPerAngle", 0);
   display.setText("tStatus_pg5", "FAZA 1A: Iskanje najnizje tocke\rVreteno gre navzdol do S43...");
 }
@@ -2027,7 +2189,7 @@ void updateReferenceRun() {
   float currentAngle = angleSensor.getCalibratedAngle();
   
   // Posodobi nObrati med izvajanjem
-  display.setNumber("nObrati", (int32_t)refRevolutions);
+  setNumberWithLength("nObrati", (int32_t)refRevolutions);
   
   // === FAZA 1A: ISKANJE NAJNIŽJE TOČKE (DOL DO S43) ===
   if (refState == REF_FIND_MIN_DOWN) {
@@ -2106,7 +2268,7 @@ void updateReferenceRun() {
       lastRevCount = currentRevCount;
       
       // Posodobi display števila obratov (nObrati je Number format)
-      display.setNumber("nObrati", (int32_t)refRevolutions);
+      setNumberWithLength("nObrati", (int32_t)refRevolutions);
     }
     
     // Preveri ali je doseženo končno stikalo S46
@@ -2165,7 +2327,7 @@ void finishReferenceRun() {
   
   // Posodobi display na pgRef (page5):
   // nCicleTime - Number format (sekunde)
-  display.setNumber("nCicleTime", (int32_t)elapsedTime);
+  setNumberWithLength("nCicleTime", (int32_t)elapsedTime);
   
   // xRevPerAngle - Xfloat format z avtomatskim vvs0
   setXFloatValue("xRevPerAngle", revPerAngle);
@@ -2204,6 +2366,9 @@ void finishReferenceRun() {
 void handlePageChange(uint8_t newPage) {
   Serial.print("[PAGE] Preklop na stran ");
   Serial.println(newPage);
+  
+  // Resetiraj xFloat cache ob spremembi strani
+  resetXFloatCache();
   
   currentPage = newPage;
   display.setCurrentPage(newPage);  // Posodobi tudi v NextionDisplay
@@ -2294,7 +2459,7 @@ void handlePageChange(uint8_t newPage) {
       setXFloatValue("xAngle", displayAngle);
       
       // Naloži hitrost - uporablja se speedSredina
-      display.setNumber("nSpeed", (int32_t)(speedSredina));  // Number - brez *10
+      setNumberWithLength("nSpeed", (int32_t)(speedSredina));  // Number z avtomatskim lenth
       
       // Inicializiraj tCikli - format "izvedeni/nastavljeni"
       S2Cycles cycles = inputs.getS2Cycles();
@@ -2320,7 +2485,16 @@ void handlePageChange(uint8_t newPage) {
       
     case 4:  // pgSettings
       Serial.println("  -> pgSettings (menu nastavitev)");
-      // Samo navigacijski menu, ni aktivnih elementov
+      // Ob vrnitvi iz nastavitvenih strani (5-8) ustavi vse
+      if (outputs.isSpindleMoving()) {
+        Serial.println("[pgSettings] Vrnitev iz nastavitev - ustavljam vreteno");
+        outputs.stopSpindle();
+      }
+      // Če je bil aktiven referenčni hod, ga prekini
+      if (refState != REF_IDLE) {
+        Serial.println("[pgSettings] Prekinitev referenčnega hoda");
+        refState = REF_IDLE;
+      }
       break;
       
     case 5: { // pgRef
@@ -2330,10 +2504,8 @@ void handlePageChange(uint8_t newPage) {
       float displayAngle = getDisplayAngle();
       setXFloatValue("xAngle", displayAngle);
       
-      // Resetiraj stanje referenčnega hoda (samo če ni že aktiven)
-      if (refState == REF_IDLE) {
-        refState = REF_IDLE;
-      }
+      // Resetiraj stanje referenčnega hoda - nov začetek
+      refState = REF_IDLE;
       
       // Naloži globalne spremenljivke iz pgModeOFF (xMinAngle, xMaxAngle)
       // Te se avtomatsko nalagajo iz globalnih spremenljivk v Nextion GUI
@@ -2341,12 +2513,12 @@ void handlePageChange(uint8_t newPage) {
       setXFloatValue("xMaxAngle", calibratedMaxAngle);
       
       // Naloži hitrost iz preferences (speedSredina)
-      display.setNumber("nSpeed", (int32_t)(speedSredina));  // Number - brez *10
+      setNumberWithLength("nSpeed", (int32_t)(speedSredina));  // Number z avtomatskim lenth
       
       // Resetiraj prikaze (samo če ref. hod ni aktiven)
       if (refState == REF_IDLE) {
-        display.setNumber("nObrati", 0);
-        display.setNumber("nCicleTime", 0);
+        setNumberWithLength("nObrati", 0);
+        setNumberWithLength("nCicleTime", 0);
         setXFloatValue("xRevPerAngle", revPerAngle);  // Prikaži trenutno vrednost
       }
       
@@ -2354,6 +2526,13 @@ void handlePageChange(uint8_t newPage) {
       // Ponovno preberi displayAngle (lahko se je spremenil)
       displayAngle = getDisplayAngle();
       bool angleInRange = (displayAngle >= 0.0 && displayAngle <= 30.0);
+      Serial.print("  -> Trenutni kot: ");
+      Serial.println(displayAngle, 1);
+      Serial.print("  -> Kot v mejah 0-30°: ");
+      Serial.println(angleInRange ? "DA" : "NE");
+      // Pošljemo tudi stanje ferState na Serial monitor za debug
+      Serial.print("  -> Stanje referenčnega hoda: ");
+      Serial.println(refState == REF_IDLE ? "IDLE" : "ACTIVE");
       display.setButtonState("bRefStart", angleInRange && refState == REF_IDLE);
       
       // Nastavi tekst gumba bRefStart glede na stanje
@@ -2410,11 +2589,15 @@ void handlePageChange(uint8_t newPage) {
       // Začetno stanje - preverjanje
       display.setText("tStatus_pg8", "Razdalja magneta: PREVERJANJE...");
       
+      // POMEMBNO: Ponovno nastavi DIR pin iz spremenljivke (za primer da se je sistem resetiral)
+      digitalWrite(AS5600_DIR, as5600DirCW ? LOW : HIGH);
+      delay(20);  // Počakaj da se AS5600 odzove
+      
       // Posodobi DIR checkbox stanje
       display.setNumber("cDir", as5600DirCW ? 0 : 1);  // 0=CW, 1=CCW
       
-      // Posodobi prikaz
-      updateMagnetCalibrationDisplay();
+      // Posodobi prikaz (po delay-u ko je DIR že nastavljen)
+      updateMagnetCalibrationDisplay(true);
       
       // Izpiši status senzorja (enkrat ob preklopu)
       angleSensor.printStatus();

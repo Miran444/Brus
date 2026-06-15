@@ -28,7 +28,8 @@ AutoCycle::AutoCycle(BrusInputs* inp, BrusOutputs* out, AS5600* sensor, NextionD
 
 void AutoCycle::start(uint8_t cycles, float angleStart, float angleStop,
                      float calibratedMin, float calibratedMax, bool isCalibrated,
-                     uint8_t speedZ, uint8_t speedS, uint8_t speedK, float revPerAngle) {
+                     uint8_t speedZ, uint8_t speedS, uint8_t speedK, float revPerAngle,
+                     float angleOffset) {
     // Validacija: preveri ali so koti znotraj kalibriranih limitov
     if (isCalibrated && angleStart > 0.0 && angleStop > 0.0) {
         if (angleStart > calibratedMax) {
@@ -59,6 +60,7 @@ void AutoCycle::start(uint8_t cycles, float angleStart, float angleStop,
     this->angleStop = angleStop;
     this->calibratedMin = calibratedMin;
     this->calibratedMax = calibratedMax;
+    this->angleOffset = angleOffset;
     this->speedZacetni = speedZ;
     this->speedSredina = speedS;
     this->speedKoncni = speedK;
@@ -156,7 +158,7 @@ void AutoCycle::processStateIdle() {
 // ===== STATE: CHECK_KNIFE =====
 void AutoCycle::processStateCheckKnife() {
     // Preveri ali je nož montiran in naslonjen na brusni kamen
-    float currentAngle = angleSensor->getCalibratedAngle();
+    float currentAngle = angleSensor->getCalibratedAngle(angleOffset);
     
     Serial.print("[CHECK_KNIFE] Trenutni kot: ");
     Serial.print(currentAngle);
@@ -195,7 +197,7 @@ void AutoCycle::processStateCheckKnife() {
 
 // ===== STATE: MOVE_TO_START =====
 void AutoCycle::processStateMoveToStart() {
-    float currentAngle = angleSensor->getCalibratedAngle();
+    float currentAngle = angleSensor->getCalibratedAngle(angleOffset);
     
     // Prvi entry - začni premik
     if (millis() - stateStartTime < 50) {

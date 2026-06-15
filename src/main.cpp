@@ -122,7 +122,6 @@ uint32_t lastRevCount = 0;
 // Deklaracije funkcij
 void handleTouchPress(uint8_t componentId);
 void updateMagnetCalibrationDisplay(bool forceUpdate = false);
-float getDisplayAngle();  // Izračuna prikazani kot z upoštevanjem offseta
 
 // ===== POWER MONITORING FUNCTIONS =====
 /**
@@ -562,7 +561,7 @@ void handleTouchPress(uint8_t componentId) {
       case 7: { // bPnev - toggle ventil noža (samo če je kot v mejah)
         // Preveri ali je kot v mejah (samo če je kalibracija izvedena)
         if (anglesCalibrated) {
-          float currentAngle = angleSensor.getCalibratedAngle();
+          float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
           if (currentAngle >= calibratedMinAngle && currentAngle <= calibratedMaxAngle) {
             pnevActive = !pnevActive;
             outputs.setKnifePusher(pnevActive);
@@ -630,7 +629,7 @@ void handleTouchPress(uint8_t componentId) {
         }
         
         // Preveri trenutni kot
-        float currentAngle = angleSensor.getCalibratedAngle();
+        float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
         if (currentAngle < calibratedMinAngle || currentAngle > calibratedMaxAngle) {
           Serial.println("[bStart] NAPAKA: Kot izven mej!");
           display.setText("tStatus_pg3", "NAPAKA: Pozicioniraj vreteno!");
@@ -651,7 +650,8 @@ void handleTouchPress(uint8_t componentId) {
         
         autoCycle.start(cycles, savedAngleStart, savedAngleStop,
                        calibratedMinAngle, calibratedMaxAngle, anglesCalibrated,
-                       speedZacetni, speedSredina, speedKoncni, revPerAngle);
+                       speedZacetni, speedSredina, speedKoncni, revPerAngle,
+                       as5600AngleOffset);
         autoModeActive = true;
         
         display.setText("bStart", "STOP");
@@ -685,14 +685,14 @@ void handleTouchPress(uint8_t componentId) {
           display.setText("tStatus_pg5", "Referenčni hod ustavljen");
           
           // Preveri kot za ponovno omogočitev gumba
-          float currentAngle = angleSensor.getCalibratedAngle();
+          float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
           bool angleInRange = (currentAngle >= 0.0 && currentAngle <= 30.0);
           display.setButtonState("bRefStart", angleInRange);
           break;
         }
         
         // Sicer začni nov ref. hod - preveri kot
-        float currentAngle = angleSensor.getCalibratedAngle();
+        float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
         if (currentAngle < 0.0 || currentAngle > 30.0) {
           Serial.print("[bRefStart] NAPAKA: Kot izven mej! Trenutni: ");
           Serial.print(currentAngle, 1);
@@ -721,17 +721,17 @@ void handleTouchPress(uint8_t componentId) {
         if (angleSettingMode == ANGLE_IDLE) {
           // Začni nastavitev začetnega kota
           angleSettingMode = ANGLE_SET_START;
-          tempAngleStart = angleSensor.getCalibratedAngle();
+          tempAngleStart = angleSensor.getCalibratedAngle(as5600AngleOffset);
           Serial.println("[bNastaviKote] Nastavljanje ZAČETNEGA kota - uporabite tipke S42(Gor)/S41(Dol)");
           display.setText("bNastaviKote", "Zacetni");
           updatePage7AngleDisplay();
         }
         else if (angleSettingMode == ANGLE_SET_START) {
           // Shrani začetni kot in začni nastavitev končnega
-          tempAngleStart = angleSensor.getCalibratedAngle();
+          tempAngleStart = angleSensor.getCalibratedAngle(as5600AngleOffset);
           angleSettingMode = ANGLE_SET_STOP;
           anglesChanged = true;
-          tempAngleStop = angleSensor.getCalibratedAngle();
+          tempAngleStop = angleSensor.getCalibratedAngle(as5600AngleOffset);
           Serial.print("[bNastaviKote] Začetni kot nastavljen: ");
           Serial.print(tempAngleStart, 1);
           Serial.println("°");
@@ -742,7 +742,7 @@ void handleTouchPress(uint8_t componentId) {
         }
         else if (angleSettingMode == ANGLE_SET_STOP) {
           // Shrani končni kot in resetiraj
-          tempAngleStop = angleSensor.getCalibratedAngle();
+          tempAngleStop = angleSensor.getCalibratedAngle(as5600AngleOffset);
           
           // Validacija: Začetni kot mora biti večji od končnega
           if (tempAngleStart <= tempAngleStop) {
@@ -862,7 +862,7 @@ void handleTouchPress(uint8_t componentId) {
         }
         
         // Preveri trenutni kot
-        float currentAngle = angleSensor.getCalibratedAngle();
+        float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
         if (currentAngle < calibratedMinAngle || currentAngle > calibratedMaxAngle) {
           Serial.println("[bStart] NAPAKA: Kot izven mej!");
           display.setText("tStatus_pg3", "NAPAKA: Pozicioniraj vreteno!");
@@ -883,7 +883,8 @@ void handleTouchPress(uint8_t componentId) {
         
         autoCycle.start(cycles, savedAngleStart, savedAngleStop,
                        calibratedMinAngle, calibratedMaxAngle, anglesCalibrated,
-                       speedZacetni, speedSredina, speedKoncni, revPerAngle);
+                       speedZacetni, speedSredina, speedKoncni, revPerAngle,
+                       as5600AngleOffset);
         autoModeActive = true;
         
         display.setText("tStatus_pg3", "AUTO cikel zagnan!");
@@ -1086,7 +1087,7 @@ void loop() {
     
     // Posodobi prikaz kota xAngle na stranih ki ga imajo (1,2,3,5,7)
     if (currentPage == 1 || currentPage == 2 || currentPage == 3 || currentPage == 5 || currentPage == 7) {
-      float displayAngle = getDisplayAngle();
+      float displayAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
       
       // Vedno posodobi display ob vsakem branju (vsakih 300ms)
       // Serial.print("[TEST 300ms] AS5600 prikazani kot: ");
@@ -1106,7 +1107,7 @@ void loop() {
     
     // Posodobi tStatus_pg2 - status motorja in sporočila
     // Preveri in omogoči/onemogoči bPnev glede na kot
-    float currentAngle = angleSensor.getCalibratedAngle();
+    float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
     if (anglesCalibrated) {
       bool inRange = (currentAngle >= calibratedMinAngle && currentAngle <= calibratedMaxAngle);
       display.setButtonState("bPnev", inRange);
@@ -1195,13 +1196,13 @@ void loop() {
     float previousAngle = (angleSettingMode == ANGLE_SET_START) ? tempAngleStart : tempAngleStop;
     
     if (angleSettingMode == ANGLE_SET_START) {
-      tempAngleStart = angleSensor.getCalibratedAngle();
+      tempAngleStart = angleSensor.getCalibratedAngle(as5600AngleOffset);
       if (abs(tempAngleStart - previousAngle) > 0.1) {  // Sprememba > 0.1°
         anglesChanged = true;
         display.setButtonState("bSave", true);
       }
     } else if (angleSettingMode == ANGLE_SET_STOP) {
-      tempAngleStop = angleSensor.getCalibratedAngle();
+      tempAngleStop = angleSensor.getCalibratedAngle(as5600AngleOffset);
       if (abs(tempAngleStop - previousAngle) > 0.1) {  // Sprememba > 0.1°
         anglesChanged = true;
         display.setButtonState("bSave", true);
@@ -1227,7 +1228,7 @@ void loop() {
       static unsigned long lastRefButtonUpdate = 0;
       if (currentMillis - lastRefButtonUpdate >= 500) {
         lastRefButtonUpdate = currentMillis;
-        float currentAngle = angleSensor.getCalibratedAngle();
+        float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
         bool angleInRange = (currentAngle >= 0.0 && currentAngle <= 30.0);
         display.setButtonState("bRefStart", angleInRange);
         
@@ -1317,14 +1318,14 @@ void loop() {
       
       // Posodobi začasni kot med nastavljanjem
       if (angleSettingMode == ANGLE_SET_START) {
-        tempAngleStart = angleSensor.getCalibratedAngle();
+        tempAngleStart = angleSensor.getCalibratedAngle(as5600AngleOffset);
       } else if (angleSettingMode == ANGLE_SET_STOP) {
-        tempAngleStop = angleSensor.getCalibratedAngle();
+        tempAngleStop = angleSensor.getCalibratedAngle(as5600AngleOffset);
       }
     }
     
     // Varnostna preverjanja limitov (če je kalibracija opravljena)
-    float currentAngle = angleSensor.getCalibratedAngle();
+    float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
     if (anglesCalibrated) {
       if (wantMoveUp && currentAngle >= calibratedMaxAngle) {
         outputs.stopSpindle();
@@ -1396,13 +1397,15 @@ void loop() {
         if (cycles == CYCLES_CONTINUOUS) {
           autoCycle.start(0, savedAngleStart, savedAngleStop, 
                          calibratedMinAngle, calibratedMaxAngle, anglesCalibrated,
-                         speedZacetni, speedSredina, speedKoncni, revPerAngle);
+                         speedZacetni, speedSredina, speedKoncni, revPerAngle,
+                         as5600AngleOffset);
           autoModeActive = true;
         } 
         else if (cycles >= CYCLES_2 && cycles <= CYCLES_7) {
           autoCycle.start(cycles, savedAngleStart, savedAngleStop,
                          calibratedMinAngle, calibratedMaxAngle, anglesCalibrated,
-                         speedZacetni, speedSredina, speedKoncni, revPerAngle);
+                         speedZacetni, speedSredina, speedKoncni, revPerAngle,
+                         as5600AngleOffset);
           autoModeActive = true;
         }
         else {
@@ -1720,25 +1723,6 @@ uint8_t speedToPWM(uint8_t percent) {
   uint8_t pwm = 128 + ((percent - 50) * 127) / 50;
   
   return pwm;
-}
-
-/**
- * @brief Izračuna prikazani kot z upoštevanjem as5600AngleOffset
- * 
- * Uporaba: Ko uporabnik nastavi referenco (bSetZero), se trenutni kot shrani
- * kot offset. Vsi prikazi xAngle nato prikažejo kot relativno glede na to referenco.
- * 
- * @return Kot v stopinjah (0-360°) z upoštevanjem offseta
- */
-float getDisplayAngle() {
-  float rawAngle = angleSensor.getAngle();
-  float displayAngle = rawAngle - as5600AngleOffset;
-  
-  // Normalizacija na 0-360°
-  if (displayAngle < 0) displayAngle += 360.0;
-  else if (displayAngle >= 360.0) displayAngle -= 360.0;
-  
-  return displayAngle;
 }
 
 void setXFloatValue(const char* objName, float value) {
@@ -2129,7 +2113,7 @@ void updateAutoModeReadiness() {
   }
   else {
     // Preveri trenutni kot
-    float currentAngle = angleSensor.getCalibratedAngle();
+    float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
     if (currentAngle < calibratedMinAngle || currentAngle > calibratedMaxAngle) {
       ready = false;
       status = "Pozicioniraj vreteno med MIN in MAX!";
@@ -2186,7 +2170,7 @@ void startReferenceRun() {
 }
 
 void updateReferenceRun() {
-  float currentAngle = angleSensor.getCalibratedAngle();
+  float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
   
   // Posodobi nObrati med izvajanjem
   setNumberWithLength("nObrati", (int32_t)refRevolutions);
@@ -2393,7 +2377,7 @@ void handlePageChange(uint8_t newPage) {
       Serial.println("  -> pgModeOFF (osnovna stran)");
       
       // Najprej pošlji trenutni kot xAngle (ostala xFloat polja se naložijo iz globalnih spr.)
-      float displayAngle = getDisplayAngle();
+      float displayAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
       setXFloatValue("xAngle", displayAngle);
       
       // Preveri pogoje in nastavi statusno sporočilo
@@ -2431,7 +2415,7 @@ void handlePageChange(uint8_t newPage) {
       Serial.println("  -> pgModeMAN (ročni način)");
       
       // Najprej pošlji trenutni kot xAngle (ostala xFloat polja se naložijo iz globalnih spr.)
-      float displayAngle = getDisplayAngle();
+      float displayAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
       setXFloatValue("xAngle", displayAngle);
       
       // Naloži hitrost iz preferences
@@ -2455,7 +2439,7 @@ void handlePageChange(uint8_t newPage) {
       Serial.println("  -> pgModeAUTO (avtomatski način)");
       
       // Najprej pošlji trenutni kot xAngle
-      float displayAngle = getDisplayAngle();
+      float displayAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
       setXFloatValue("xAngle", displayAngle);
       
       // Naloži hitrost - uporablja se speedSredina
@@ -2501,7 +2485,7 @@ void handlePageChange(uint8_t newPage) {
       Serial.println("  -> pgRef (referenčni hod)");
       
       // Najprej pošlji trenutni kot xAngle
-      float displayAngle = getDisplayAngle();
+      float displayAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
       setXFloatValue("xAngle", displayAngle);
       
       // Resetiraj stanje referenčnega hoda - nov začetek
@@ -2524,7 +2508,7 @@ void handlePageChange(uint8_t newPage) {
       
       // Preveri ali je kot v mejah (0-30°) za omogočitev bRefStart
       // Ponovno preberi displayAngle (lahko se je spremenil)
-      displayAngle = getDisplayAngle();
+      displayAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
       bool angleInRange = (displayAngle >= 0.0 && displayAngle <= 30.0);
       Serial.print("  -> Trenutni kot: ");
       Serial.println(displayAngle, 1);
@@ -2565,7 +2549,7 @@ void handlePageChange(uint8_t newPage) {
       Serial.println("  -> pgAngle (nastavitev kotov)");
       
       // Najprej pošlji trenutni kot xAngle
-      float displayAngle = getDisplayAngle();
+      float displayAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
       setXFloatValue("xAngle", displayAngle);
       
       // xMinAngle, xMaxAngle, xStartAngle, xStopAngle se naložijo avtomatsko iz globalnih spr.

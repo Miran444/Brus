@@ -299,16 +299,13 @@ bool BrusInputs::isKnifeOut() {
 // ===== AS5600 FUNKCIJE =====
 float BrusInputs::getSpindleAngle() {
     if (angleEncoder->isSensorPresent()) {
-        return angleEncoder->getCalibratedAngle();
+        return angleEncoder->getAngle();  // Vrne surovi kot brez offseta
     }
     return -1.0; // Napaka
 }
 
-void BrusInputs::calibrateAngleZero() {
-    if (angleEncoder->isSensorPresent()) {
-        angleEncoder->calibrateZero();
-    }
-}
+// Opomba: calibrateAngleZero() je odstranjena.
+// Offset (as5600AngleOffset) se upravlja v main.cpp in je shranjen v Preferences.
 
 unsigned long BrusInputs::getRevolutions() {
     return revolutionCount;

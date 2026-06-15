@@ -3,10 +3,7 @@
 AS5600::AS5600() {
     wire = nullptr;
     i2cAddress = AS5600_ADDRESS;
-    angleOffset = 0.0;
-    isCalibrated = false;
     currentAngle = 0.0;
-    calibratedAngle = 0.0;
     rawAngle = 0;
     tiltDetected = false;
     lastTiltState = false;
@@ -79,23 +76,15 @@ void AS5600::update() {
     if (!sensorPresent) {
         // Simulator mode - uporabi simuliran kot
         currentAngle = simulatedAngle;
-        calibratedAngle = simulatedAngle - angleOffset;
         
-        // Normaliziraj na 0-360°
-        if (calibratedAngle < 0) {
-            calibratedAngle += 360.0;
-        } else if (calibratedAngle >= 360.0) {
-            calibratedAngle -= 360.0;
-        }
-        
-        // Detekcija naklona za simuliran kot
+        // Detekcija naklona za simuliran kot (uporablja surovi kot brez offseta)
         if (!lastTiltState) {
-            if (calibratedAngle <= TILT_ANGLE_THRESHOLD) {
+            if (currentAngle <= TILT_ANGLE_THRESHOLD) {
                 tiltDetected = true;
                 lastTiltState = true;
             }
         } else {
-            if (calibratedAngle > (TILT_ANGLE_THRESHOLD + ANGLE_HYSTERESIS)) {
+            if (currentAngle > (TILT_ANGLE_THRESHOLD + ANGLE_HYSTERESIS)) {
                 tiltDetected = false;
                 lastTiltState = false;
             } else {
@@ -111,29 +100,19 @@ void AS5600::update() {
     // Pretvori v stopinje (12-bit = 4096 korakov za 360°)
     currentAngle = (rawAngle * 360.0) / 4096.0;
     
-    // Uporabi offset za kalibriran kot
-    calibratedAngle = currentAngle - angleOffset;
-    
-    // Normaliziraj na 0-360°
-    if (calibratedAngle < 0) {
-        calibratedAngle += 360.0;
-    } else if (calibratedAngle >= 360.0) {
-        calibratedAngle -= 360.0;
-    }
-    
     // Preveri status magneta
     magnetStatus = readRegister8(AS5600_STATUS);
     
-    // Detekcija naklona z histerezo
+    // Detekcija naklona z histerezo (uporablja surovi kot brez offseta)
     if (!lastTiltState) {
         // Če še ni bil detektiran naklon, preveri če smo pod pragom
-        if (calibratedAngle <= TILT_ANGLE_THRESHOLD) {
+        if (currentAngle <= TILT_ANGLE_THRESHOLD) {
             tiltDetected = true;
             lastTiltState = true;
         }
     } else {
         // Če je bil že detektiran, potrebujemo histereza (kot mora biti > prag + histereza)
-        if (calibratedAngle > (TILT_ANGLE_THRESHOLD + ANGLE_HYSTERESIS)) {
+        if (currentAngle > (TILT_ANGLE_THRESHOLD + ANGLE_HYSTERESIS)) {
             tiltDetected = false;
             lastTiltState = false;
         } else {
@@ -142,27 +121,25 @@ void AS5600::update() {
     }
 }
 
-void AS5600::calibrateZero() {
-    update();
-    angleOffset = currentAngle;
-    isCalibrated = true;
-    
-    Serial.print("AS5600 kalibriran - offset: ");
-    Serial.print(angleOffset, 2);
-    Serial.println("°");
-}
-
-void AS5600::setAngleOffset(float offset) {
-    angleOffset = offset;
-    isCalibrated = true;
-}
+// Opomba: calibrateZero() in setAngleOffset() so odstranjene.
+// Offset se sedaj upravlja eksterno (as5600AngleOffset v main.cpp)
 
 float AS5600::getAngle() {
     return currentAngle;
 }
 
-float AS5600::getCalibratedAngle() {
-    return calibratedAngle;
+float AS5600::getCalibratedAngle(float offset) {
+    // Izračuna kalibriran kot z upoštevanjem offseta
+    float calibrated = currentAngle - offset;
+    
+    // Normaliziraj na 0-360°
+    if (calibrated < 0) {
+        calibrated += 360.0;
+    } else if (calibrated >= 360.0) {
+        calibrated -= 360.0;
+    }
+    
+    return calibrated;
 }
 
 bool AS5600::isTiltAngleReached() {
@@ -242,18 +219,10 @@ void AS5600::printStatus() {
     Serial.print(currentAngle, 2);
     Serial.println("°)");
     
-    Serial.print("Kalibriran kot: ");
-    Serial.print(calibratedAngle, 2);
-    Serial.println("°");
-    
-    Serial.print("Offset: ");
-    Serial.print(angleOffset, 2);
-    Serial.println("°");
-    
     Serial.print("Tilt (<");
     Serial.print(TILT_ANGLE_THRESHOLD, 1);
     Serial.print("°): ");
     Serial.println(tiltDetected ? "DA" : "NE");
     
-    Serial.println("--------------------");
+    Serial.println("-------------------");
 }

@@ -61,8 +61,8 @@ public:
     
     // AS5600 funkcije
     AS5600* getAngleEncoder() { return angleEncoder; }
-    float getSpindleAngle();    // Vrne trenutni kot vretena
-    void calibrateAngleZero();  // Kalibracija začetnega kota
+    float getSpindleAngle();    // Vrne trenutni surovi kot vretena (brez offseta)
+    // Opomba: calibrateAngleZero() je odstranjena - offset se upravlja v main.cpp
     
     // Temperatura alarm
     bool isTempAlarm();

@@ -20,13 +20,8 @@ private:
     TwoWire* wire;
     uint8_t i2cAddress;
     
-    // Kalibracija
-    float angleOffset;          // Offset za kalibriranje 0° točke
-    bool isCalibrated;
-    
     // Trenutne vrednosti
     float currentAngle;         // Trenutni kot (0-360°)
-    float calibratedAngle;      // Kalibriran kot glede na offset
     uint16_t rawAngle;          // Surova 12-bit vrednost
     
     // Detekcija naklona
@@ -51,14 +46,9 @@ public:
     bool begin(TwoWire* i2c = &Wire);
     void update();
     
-    // Kalibracija
-    void calibrateZero();           // Nastavi trenutni kot kot 0°
-    void setAngleOffset(float offset);
-    float getAngleOffset() { return angleOffset; }
-    
     // Branje kota
-    float getAngle();               // Vrne trenutni kot (0-360°)
-    float getCalibratedAngle();     // Vrne kalibriran kot
+    float getAngle();                       // Vrne trenutni kot (0-360°)
+    float getCalibratedAngle(float offset = 0.0);  // Vrne kalibriran kot z offsetom
     uint16_t getRawValue() { return rawAngle; }
     
     // Detekcija naklona

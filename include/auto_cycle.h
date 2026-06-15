@@ -28,6 +28,7 @@ private:
     float angleStop;                // Končni kot (nižji)
     float calibratedMin;            // Minimalni varni kot
     float calibratedMax;            // Maksimalni varni kot
+    float angleOffset;              // Offset za kot (iz as5600AngleOffset)
     
     // Hitrosti (v procentih 50-100%)
     uint8_t speedZacetni;           // Faza 1: Start do Start-2.0°
@@ -73,7 +74,8 @@ public:
     // Kontrola cikla
     void start(uint8_t cycles, float angleStart, float angleStop,
                float calibratedMin, float calibratedMax, bool isCalibrated,
-               uint8_t speedZ, uint8_t speedS, uint8_t speedK, float revPerAngle);
+               uint8_t speedZ, uint8_t speedS, uint8_t speedK, float revPerAngle,
+               float angleOffset = 0.0);
     void stop();                    // Ustavi cikel
     void reset();                   // Reset state machine
     

@@ -17,7 +17,7 @@
 #define IN_S42_GOR          1   // S42 - Tipka vreteno gor
 #define IN_S41_DOL          2   // S41 - Tipka vreteno dol
 #define IN_S45_STEVEC       3   // S45 - Števec obratov motorja vretena
-#define IN_S44_NAKLON       4   // S44 - Stikalo naklona (< 10°)
+// #define IN_S44_NAKLON       4   // S44 - Stikalo naklona (< 10°) - NI VEČ V UPORABI (stikalo fizično odstranjeno)
 #define IN_S1_ROCNO         5   // S1 - Ročno
 #define IN_S1_AVTOMATSKO    6   // S1 - Avtomatsko
 #define IN_RESET            7   // Reset tipka
@@ -62,9 +62,10 @@ enum S2Cycles {
 
 // ===== AS5600 NASTAVITVE =====
 #define AS5600_ADDRESS      0x36    // I2C adresa AS5600
-#define USE_AS5600_FOR_TILT true    // true = uporabi AS5600, false = uporabi S44 stikalo
-#define TILT_ANGLE_THRESHOLD 10.0   // Kot pri katerem se aktivira "tilt" signal (stopinje)
-#define ANGLE_HYSTERESIS     0.5    // Histereza za preprečitev tresenja (stopinje)
+// TILT FUNKCIONALNOST NI VEČ V UPORABI - minAngle se nastavi poljubno
+// #define USE_AS5600_FOR_TILT true    // true = uporabi AS5600, false = uporabi S44 stikalo
+// #define TILT_ANGLE_THRESHOLD 10.0   // Kot pri katerem se aktivira "tilt" signal (stopinje)
+// #define ANGLE_HYSTERESIS     0.5    // Histereza za preprečitev tresenja (stopinje)
 
 // ===== UART PINS za Nextion Display =====
 #define NEXTION_TX      17      // GPIO17 - TX (ESP32 -> Nextion RX)

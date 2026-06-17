@@ -121,8 +121,8 @@ public:
     void setMode(const char* mode);           // "OFF", "MANUAL", "AUTO"
     void setStatus(const char* status);       // "Stop", "Pripravljen", "Run", "Alarm"
     void setCycles(uint8_t current, uint8_t target);
-    void setAngle(float angle);
-    void setAngleRange(float angleStart, float angleStop);
+    // void setAngle(float angle);  // ZAKOMENTIRANO - tAngle objekt ne obstaja več
+    // void setAngleRange(float angleStart, float angleStop);  // ZAKOMENTIRANO - xAngleStart/Stop se pošljeta pri preklopu strani
     void setButtonState(const char* button, bool enabled);
     void setBrusState(bool active);
     void setPnevState(bool active);

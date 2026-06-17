@@ -8,8 +8,8 @@ BrusInputs::BrusInputs() {
     tempAlarm = false;
     lastReadTime = 0;
     
-    // Inicializacija AS5600
-    angleEncoder = new AS5600();
+    // AS5600 angleEncoder bo nastavljen kasneje z setAngleEncoder()
+    angleEncoder = nullptr;
     
     // Inicializacija debounce
     for (int i = 0; i < 16; i++) {
@@ -43,8 +43,9 @@ void BrusInputs::begin() {
     pinMode(AS5600_DIR, OUTPUT);
     Serial.println("AS5600 DIR pin inicializiran (vrednost bo nastavljena iz Preferences)");
     
-    // Inicializacija AS5600
-    angleEncoder->begin(&Wire);
+    // Opomba: AS5600 angleEncoder se inicializira kasneje v main.cpp,
+    // POTEM ko se iz Preferences naloži as5600DirCW in nastavi DIR pin
+    // angleEncoder->begin(&Wire);  // ODKOMENTIRANO - se kliče v main.cpp
     
     // Prvo branje
     update();
@@ -76,7 +77,7 @@ void BrusInputs::begin() {
     
     Serial.print("Senzorji: ");
     if (isSpindleAtBottom()) Serial.print("SPODAJ ");
-    if (isSpindleTilted()) Serial.print("NAKLON ");
+    // if (isSpindleTilted()) Serial.print("NAKLON ");  // ZASTARELO - TILT ni več v uporabi
     if (isKnifeIn()) Serial.print("NOŽ-IN ");
     if (isKnifeOut()) Serial.print("NOŽ-VEN ");
     Serial.println();
@@ -196,8 +197,10 @@ void BrusInputs::update() {
         }
     }
     
-    // Posodobi AS5600 encoder (vedno)
-    angleEncoder->update();
+    // Posodobi AS5600 encoder (če je inicializiran)
+    if (angleEncoder != nullptr) {
+        angleEncoder->update();
+    }
     
     // Števec obratov - detekcija naraščajočega robu
     bool currentCounter = getInputBit(IN_S45_STEVEC);
@@ -265,16 +268,17 @@ bool BrusInputs::isS42UpPressed() {
 }
 
 // ===== SENZORJI =====
-bool BrusInputs::isSpindleTilted() {
-    // Izbira vira: AS5600 ali S44 stikalo
-    if (USE_AS5600_FOR_TILT && angleEncoder->isSensorPresent()) {
-        // Uporabi AS5600 magnetic encoder
-        return angleEncoder->isTiltAngleReached();
-    } else {
-        // Uporabi S44 stikalo kot fallback
-        return getInputBit(IN_S44_NAKLON);
-    }
-}
+// ZASTARELO - TILT funkcionalnost ni več v uporabi
+// bool BrusInputs::isSpindleTilted() {
+//     // Izbira vira: AS5600 ali S44 stikalo
+//     if (USE_AS5600_FOR_TILT && angleEncoder != nullptr && angleEncoder->isSensorPresent()) {
+//         // Uporabi AS5600 magnetic encoder
+//         return angleEncoder->isTiltAngleReached();
+//     } else {
+//         // Uporabi S44 stikalo kot fallback
+//         return getInputBit(IN_S44_NAKLON);
+//     }
+// }
 
 bool BrusInputs::isSpindleAtBottom() {
     // S43 - varnostno končno stikalo pri ~0° (spodnji položaj)
@@ -298,7 +302,7 @@ bool BrusInputs::isKnifeOut() {
 
 // ===== AS5600 FUNKCIJE =====
 float BrusInputs::getSpindleAngle() {
-    if (angleEncoder->isSensorPresent()) {
+    if (angleEncoder != nullptr && angleEncoder->isSensorPresent()) {
         return angleEncoder->getAngle();  // Vrne surovi kot brez offseta
     }
     return -1.0; // Napaka

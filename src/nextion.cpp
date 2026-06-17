@@ -183,8 +183,8 @@ void NextionDisplay::sendCommand(const char* cmd) {
     if (!displayReady) {
         return;  // Ignoriraj ukaze dokler display ni pripravljen
     }
-    // Serial.print("[NEXTION TX] ");  // DEBUG
-    // Serial.println(cmd);             // DEBUG
+    Serial.print("[NEXTION TX] ");  // DEBUG
+    Serial.println(cmd);             // DEBUG
     serial->print(cmd);
     endCommand();
 }
@@ -728,11 +728,11 @@ void NextionDisplay::setText(const char* obj, const char* text) {
     if (!displayReady) {
         return;  // Ignoriraj ukaze dokler display ni pripravljen
     }
-    // Serial.print("[NX->] ");
-    // Serial.print(obj);
-    // Serial.print(".txt=\"");
-    // Serial.print(text);
-    // Serial.println("\"");
+    Serial.print("[NX_text->] ");
+    Serial.print(obj);
+    Serial.print(".txt=\"");
+    Serial.print(text);
+    Serial.println("\"");
     serial->print(obj);
     serial->print(".txt=\"");
     serial->print(text);
@@ -744,6 +744,10 @@ void NextionDisplay::setNumber(const char* obj, int32_t value) {
     if (!displayReady) {
         return;  // Ignoriraj ukaze dokler display ni pripravljen
     }
+    Serial.print("[NX_number->] ");
+    Serial.print(obj);
+    Serial.print(".val=");
+    Serial.println(value);
     serial->print(obj);
     serial->print(".val=");
     serial->print(value);
@@ -752,10 +756,10 @@ void NextionDisplay::setNumber(const char* obj, int32_t value) {
 
 void NextionDisplay::setProgress(const char* obj, int32_t value) {
     // Progress bar - vrednost 0-100
-    // Serial.print("[NX->] ");
-    // Serial.print(obj);
-    // Serial.print(".val=");
-    // Serial.println(value);
+    Serial.print("[NX_progress->] ");
+    Serial.print(obj);
+    Serial.print(".val=");
+    Serial.println(value);
     serial->print(obj);
     serial->print(".val=");
     serial->print(value);
@@ -763,6 +767,12 @@ void NextionDisplay::setProgress(const char* obj, int32_t value) {
 }
 
 void NextionDisplay::showPage(uint8_t pageId) {
+    if (!displayReady) {
+        return;  // Ignoriraj ukaze dokler display ni pripravljen
+    }
+    Serial.print("[NX_page->] ");
+    Serial.print("page ");
+    Serial.println(pageId);
     serial->print("page ");
     serial->print(pageId);
     endCommand();
@@ -775,6 +785,13 @@ void NextionDisplay::sendRawCommand(const char* cmd) {
 
 void NextionDisplay::setGlobalVariable(const char* varName, int32_t value) {
     // Nastavi globalno spremenljivko (Variable v Nextion HMI)
+    if (!displayReady) {
+        return;  // Ignoriraj ukaze dokler display ni pripravljen
+    }
+    Serial.print("[NX_global->] ");
+    Serial.print(varName);
+    Serial.print(".val=");
+    Serial.println(value);
     serial->print(varName);
     serial->print(".val=");
     serial->print(value);
@@ -864,11 +881,14 @@ void NextionDisplay::setAngle(float angle) {
 }
 */
 
+// ZAKOMENTIRANO - xAngleStart in xAngleStop se pošiljata pri preklopu na stran kjer obstajata
+// Funkcija ni več potrebna, ker objekta ne obstajata na vseh straneh
+/*
 void NextionDisplay::setAngleRange(float angleStart, float angleStop) {
     if (abs(angleStart - lastAngleStart) > 0.1) {
         char buffer[16];
         sprintf(buffer, "%.1f\xB0", angleStart);  // \xB0 = ° znak
-        setText("tAngleStart", buffer);
+        setText("xAngleStart", buffer);
         lastAngleStart = angleStart;
         
         // Nastavi tudi globalno spremenljivko (int * 10)
@@ -878,13 +898,14 @@ void NextionDisplay::setAngleRange(float angleStart, float angleStop) {
     if (abs(angleStop - lastAngleStop) > 0.1) {
         char buffer[16];
         sprintf(buffer, "%.1f\xB0", angleStop);  // \xB0 = ° znak
-        setText("tAngleStop", buffer);
+        setText("xAngleStop", buffer);
         lastAngleStop = angleStop;
         
         // Nastavi tudi globalno spremenljivko (int * 10)
         setGlobalVariable("vaAngleStop", (int32_t)(angleStop * 10));
     }
 }
+*/
 
 void NextionDisplay::setStatus(const char* status) {
     if (String(status) != lastStatus) {

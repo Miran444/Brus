@@ -5,8 +5,9 @@ AS5600::AS5600() {
     i2cAddress = AS5600_ADDRESS;
     currentAngle = 0.0;
     rawAngle = 0;
-    tiltDetected = false;
-    lastTiltState = false;
+    // ZASTARELO - TILT funkcionalnost ni več v uporabi
+    // tiltDetected = false;
+    // lastTiltState = false;
     sensorPresent = false;
     magnetStatus = 0;
     simulatedAngle = 45.0;  // Default simulirana vrednost
@@ -77,20 +78,20 @@ void AS5600::update() {
         // Simulator mode - uporabi simuliran kot
         currentAngle = simulatedAngle;
         
-        // Detekcija naklona za simuliran kot (uporablja surovi kot brez offseta)
-        if (!lastTiltState) {
-            if (currentAngle <= TILT_ANGLE_THRESHOLD) {
-                tiltDetected = true;
-                lastTiltState = true;
-            }
-        } else {
-            if (currentAngle > (TILT_ANGLE_THRESHOLD + ANGLE_HYSTERESIS)) {
-                tiltDetected = false;
-                lastTiltState = false;
-            } else {
-                tiltDetected = true;
-            }
-        }
+        // ZASTARELO - Detekcija naklona za simuliran kot (uporablja surovi kot brez offseta)
+        // if (!lastTiltState) {
+        //     if (currentAngle <= TILT_ANGLE_THRESHOLD) {
+        //         tiltDetected = true;
+        //         lastTiltState = true;
+        //     }
+        // } else {
+        //     if (currentAngle > (TILT_ANGLE_THRESHOLD + ANGLE_HYSTERESIS)) {
+        //         tiltDetected = false;
+        //         lastTiltState = false;
+        //     } else {
+        //         tiltDetected = true;
+        //     }
+        // }
         return;
     }
     
@@ -103,22 +104,22 @@ void AS5600::update() {
     // Preveri status magneta
     magnetStatus = readRegister8(AS5600_STATUS);
     
-    // Detekcija naklona z histerezo (uporablja surovi kot brez offseta)
-    if (!lastTiltState) {
-        // Če še ni bil detektiran naklon, preveri če smo pod pragom
-        if (currentAngle <= TILT_ANGLE_THRESHOLD) {
-            tiltDetected = true;
-            lastTiltState = true;
-        }
-    } else {
-        // Če je bil že detektiran, potrebujemo histereza (kot mora biti > prag + histereza)
-        if (currentAngle > (TILT_ANGLE_THRESHOLD + ANGLE_HYSTERESIS)) {
-            tiltDetected = false;
-            lastTiltState = false;
-        } else {
-            tiltDetected = true;
-        }
-    }
+    // ZASTARELO - Detekcija naklona z histerezo (uporablja surovi kot brez offseta)
+    // if (!lastTiltState) {
+    //     // Če še ni bil detektiran naklon, preveri če smo pod pragom
+    //     if (currentAngle <= TILT_ANGLE_THRESHOLD) {
+    //         tiltDetected = true;
+    //         lastTiltState = true;
+    //     }
+    // } else {
+    //     // Če je bil že detektiran, potrebujemo histereza (kot mora biti > prag + histereza)
+    //     if (currentAngle > (TILT_ANGLE_THRESHOLD + ANGLE_HYSTERESIS)) {
+    //         tiltDetected = false;
+    //         lastTiltState = false;
+    //     } else {
+    //         tiltDetected = true;
+    //     }
+    // }
 }
 
 // Opomba: calibrateZero() in setAngleOffset() so odstranjene.
@@ -142,9 +143,10 @@ float AS5600::getCalibratedAngle(float offset) {
     return calibrated;
 }
 
-bool AS5600::isTiltAngleReached() {
-    return tiltDetected;
-}
+// ZASTARELO - TILT funkcionalnost ni več v uporabi
+// bool AS5600::isTiltAngleReached() {
+//     return tiltDetected;
+// }
 
 bool AS5600::isMagnetDetected() {
     // Status register: bit 5 = MD (magnet detected)
@@ -219,10 +221,11 @@ void AS5600::printStatus() {
     Serial.print(currentAngle, 2);
     Serial.println("°)");
     
-    Serial.print("Tilt (<");
-    Serial.print(TILT_ANGLE_THRESHOLD, 1);
-    Serial.print("°): ");
-    Serial.println(tiltDetected ? "DA" : "NE");
+    // ZASTARELO - TILT funkcionalnost ni več v uporabi
+    // Serial.print("Tilt (<");
+    // Serial.print(TILT_ANGLE_THRESHOLD, 1);
+    // Serial.print("°): ");
+    // Serial.println(tiltDetected ? "DA" : "NE");
     
     Serial.println("-------------------");
 }

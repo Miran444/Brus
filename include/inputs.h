@@ -37,6 +37,7 @@ private:
 public:
     BrusInputs();
     void begin();
+    void setAngleEncoder(AS5600* encoder) { angleEncoder = encoder; }
     void update();
     
     // Branje stikala S1 (Mode)
@@ -51,7 +52,7 @@ public:
     bool isS42UpPressed();
     
     // Branje senzorjev
-    bool isSpindleTilted();     // Naklon < 10° (AS5600 ali S44)
+    // bool isSpindleTilted();     // Naklon < 10° (AS5600 ali S44)
     bool isSpindleAtBottom();   // Spodnji položaj ~0° (S43 - varnostno)
     bool isSpindleAtTop();      // Zgornji položaj MAX (S46 - končno stikalo)
     bool isKnifeIn();           // Nož je v končnem položaju NOTER (IN)

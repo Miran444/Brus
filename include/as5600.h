@@ -24,9 +24,9 @@ private:
     float currentAngle;         // Trenutni kot (0-360°)
     uint16_t rawAngle;          // Surova 12-bit vrednost
     
-    // Detekcija naklona
-    bool tiltDetected;          // Ali je kot < TILT_ANGLE_THRESHOLD
-    bool lastTiltState;         // Za histereza
+    // Detekcija naklona - ZASTARELO, ni več v uporabi
+    // bool tiltDetected;          // Ali je kot < TILT_ANGLE_THRESHOLD
+    // bool lastTiltState;         // Za histereza
     
     // Status
     bool sensorPresent;
@@ -51,8 +51,8 @@ public:
     float getCalibratedAngle(float offset = 0.0);  // Vrne kalibriran kot z offsetom
     uint16_t getRawValue() { return rawAngle; }
     
-    // Detekcija naklona
-    bool isTiltAngleReached();      // Ali je kot < TILT_ANGLE_THRESHOLD
+    // Detekcija naklona - ZASTARELO, ni več v uporabi
+    // bool isTiltAngleReached();      // Ali je kot < TILT_ANGLE_THRESHOLD
     
     // Status
     bool isSensorPresent() { return sensorPresent; }

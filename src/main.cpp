@@ -56,7 +56,7 @@ uint8_t speedRocno = 80;    // Hitrost ročnega pomika
 float revPerAngle = 0.0;    // Število obratov na stopinjo (iz kalibracije)
 
 // AS5600 nastavitve (pgMagCal - page8)
-bool as5600DirCW = true;     // true=CW (clockwise), false=CCW (counterclockwise)
+bool as5600DirCW = false;     // true=CW (clockwise), false=CCW (counterclockwise)
 float as5600AngleOffset = 0.0;  // Offset za prikazovanje kota (nastavi z bSetZero)
 
 // ===== PAGE MANAGEMENT - NOVA STRUKTURA =====
@@ -275,8 +275,13 @@ void setup() {
   // Inicializacija izhodov (NAJPREJ - varno stanje)
   outputs.begin();
   
-  // Inicializacija vhodov
+  // Inicializacija vhodov (brez AS5600 - se nastavi kasneje)
   inputs.begin();
+  
+  // NAJPREJ naloži AS5600 DIR vrednost iz Preferences
+  preferences.begin("brus", true); // Read-only mode
+  as5600DirCW = preferences.getBool("as5600DirCW", true);  // Privzeto CW
+  preferences.end();
   
   // Nastavi AS5600 DIR pin iz Preferences (po inputs.begin, ki je že inicializiral pin)
   digitalWrite(AS5600_DIR, as5600DirCW ? LOW : HIGH);
@@ -293,13 +298,16 @@ void setup() {
   // Inicializacija avtomatskega cikla
   autoCycle.begin();
   
-  // Inicializacija AS5600 senzorja
-  Wire.begin(I2C_SDA, I2C_SCL);
+  // Inicializacija AS5600 senzorja (I2C je že inicializiran v inputs.begin)
+  // Ta objekt se uporablja v main loop-u za prikaz kotov
   if (angleSensor.begin(&Wire)) {
     Serial.println("AS5600 senzor inicializiran");
   } else {
     Serial.println("NAPAKA: AS5600 senzor ni najden!");
   }
+  
+  // Poveži angleEncoder v inputs z glavnim angleSensor objektom
+  inputs.setAngleEncoder(&angleSensor);
   
   // ===== PREVERI PRISOTNOST NAPAJANJA =====
   checkPowerPresence();
@@ -1500,7 +1508,7 @@ void loop() {
         Serial.print("  ");
         
         // Prikaz kota iz AS5600 (če je prisoten)
-        if (USE_AS5600_FOR_TILT && inputs.getAngleEncoder()->isSensorPresent()) {
+        if (inputs.getAngleEncoder() != nullptr && inputs.getAngleEncoder()->isSensorPresent()) {
           float angle = inputs.getSpindleAngle();
           Serial.print("| Angle: ");
           Serial.print(angle, 1);
@@ -1520,7 +1528,7 @@ void loop() {
         }
         
         // Senzorji in alarmi
-        if (inputs.isSpindleTilted()) Serial.print("[TILT<10°] ");
+        // if (inputs.isSpindleTilted()) Serial.print("[TILT<10°] ");  // ZASTARELO - TILT ni več v uporabi
         if (inputs.isTempAlarm()) Serial.print("[TEMP!] ");
         
         Serial.println();
@@ -1612,8 +1620,8 @@ void loadAnglesFromPreferences() {
     Serial.print(savedAngleStop, 1);
     Serial.println("°");
     
-    // Posodobi display
-    display.setAngleRange(savedAngleStart, savedAngleStop);
+    // Opomba: xAngleStart in xAngleStop se pošiljata pri preklopu na stran kjer obstajata
+    // display.setAngleRange() ni več potrebna
   } else {
     anglesConfigured = false;
     Serial.println("Koti niso nastavljeni - uporabite bSave za nastavitev");
@@ -2036,7 +2044,11 @@ void processSavedAngles() {
   // Validacija: Začetni kot mora biti večji od končnega
   if (start <= stop) {
     Serial.println("[ANGLE] NAPAKA: Začetni kot mora biti večji od končnega!");
-    display.setText("tStatus_pg7", "NAPAKA: Začetni > Končni!");
+    display.setText("tStatus_pg7", "NAPAKA: Zacetni > Koncni!");
+    // Deaktiviraj bSave in resetiraj način
+    display.setButtonState("bSave", false);
+    angleSettingMode = ANGLE_IDLE;
+    updateBNastaviKoteText();
     return;
   }
   
@@ -2282,7 +2294,10 @@ void updateReferenceRun() {
 
 void finishReferenceRun() {
   refState = REF_IDLE;
-  
+  // Vrnemo stanje gumba bRefStart na možnost ponovnega starta referenčnega hoda
+  display.setButtonState("bRefStart", true);
+  // Na gumb napišemo "START" za ponovni referenčni hod
+  display.setText("bRefStart", "START");
   // Izračunaj statistiko
   float angleRange = measuredMaxAngle - measuredMinAngle;
   float revPerAngle = (refRevolutions > 0) ? (float)refRevolutions / angleRange : 0.0;

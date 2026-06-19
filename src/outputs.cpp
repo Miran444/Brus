@@ -127,10 +127,24 @@ void BrusOutputs::stopSpindle() {
 void BrusOutputs::moveKnifeIn() {
     if (!inputs) return;
     
-    // Preveri če je že noter
+    // VARNOSTNO PREVERJANJE: Če sta obe stikali aktivirani, ne delaj ničesar (napaka)
+    if (inputs->isKnifeIn() && inputs->isKnifeOut()) {
+        Serial.println("!!! NAPAKA: Obe končni stikali cilindra sta aktivirani! Ustavljam.");
+        knifeCylinderError = true;
+        knifeCylinderErrorMsg = "Napaka: Obe končni stikali aktivirani!";
+        stopKnifeCylinder();
+        knifePusherOn = false;
+        return;
+    }
+    
+    // Preveri če je že noter - če ja, začni premik VEN (oscilacija)
     if (inputs->isKnifeIn()) {
-        // Že noter, začni premik ven
-        moveKnifeOut();
+        Serial.println("   -> Cilinder: Že na položaju NOTER, začenjam premik VEN");
+        // Direktno vklopi ventil za VEN (brez rekurzivnega klica)
+        digitalWrite(OUT_VENTIL_NOZ_IN, LOW);
+        digitalWrite(OUT_VENTIL_NOZ_OUT, HIGH);
+        knifeCylinderState = KNIFE_MOVING_OUT;
+        knifeMoveStartTime = millis();
         return;
     }
     
@@ -145,10 +159,24 @@ void BrusOutputs::moveKnifeIn() {
 void BrusOutputs::moveKnifeOut() {
     if (!inputs) return;
     
-    // Preveri če je že ven
+    // VARNOSTNO PREVERJANJE: Če sta obe stikali aktivirani, ne delaj ničesar (napaka)
+    if (inputs->isKnifeIn() && inputs->isKnifeOut()) {
+        Serial.println("!!! NAPAKA: Obe končni stikali cilindra sta aktivirani! Ustavljam.");
+        knifeCylinderError = true;
+        knifeCylinderErrorMsg = "Napaka: Obe končni stikali aktivirani!";
+        stopKnifeCylinder();
+        knifePusherOn = false;
+        return;
+    }
+    
+    // Preveri če je že ven - če ja, začni premik NOTER (oscilacija)
     if (inputs->isKnifeOut()) {
-        // Že ven, začni premik noter
-        moveKnifeIn();
+        Serial.println("   -> Cilinder: Že na položaju VEN, začenjam premik NOTER");
+        // Direktno vklopi ventil za NOTER (brez rekurzivnega klica)
+        digitalWrite(OUT_VENTIL_NOZ_IN, HIGH);
+        digitalWrite(OUT_VENTIL_NOZ_OUT, LOW);
+        knifeCylinderState = KNIFE_MOVING_IN;
+        knifeMoveStartTime = millis();
         return;
     }
     
@@ -182,10 +210,10 @@ void BrusOutputs::update() {
             // TIMEOUT!
             knifeCylinderError = true;
             if (knifeCylinderState == KNIFE_MOVING_IN) {
-                knifeCylinderErrorMsg = "Varnostni čas cilindra! (NOTER)";
+                knifeCylinderErrorMsg = "Varnostni cas cilindra! (NOTER)";
                 Serial.println("!!! NAPAKA: Cilinder ni dosegel končnega položaja NOTER v 10s!");
             } else {
-                knifeCylinderErrorMsg = "Varnostni čas cilindra! (VEN)";
+                knifeCylinderErrorMsg = "Varnostni cas cilindra! (VEN)";
                 Serial.println("!!! NAPAKA: Cilinder ni dosegel končnega položaja VEN v 10s!");
             }
             stopKnifeCylinder();
@@ -194,11 +222,24 @@ void BrusOutputs::update() {
         }
     }
     
+    // VARNOSTNO PREVERJANJE: Če sta obe stikali aktivirani, ustavi
+    if (inputs->isKnifeIn() && inputs->isKnifeOut()) {
+        Serial.println("!!! NAPAKA: Obe končni stikali cilindra sta aktivirani! Ustavljam oscilacijo.");
+        knifeCylinderError = true;
+        knifeCylinderErrorMsg = "Napaka: Obe končni stikali aktivirani!";
+        stopKnifeCylinder();
+        knifePusherOn = false;
+        return;
+    }
+    
     // Preveri stanje cilindra
     if (knifeCylinderState == KNIFE_MOVING_IN) {
         // Premaknemo se NOTER - čakamo na senzor IN
         if (inputs->isKnifeIn()) {
             Serial.println("   -> Cilinder: Dosežen končni položaj NOTER");
+            // Ustavi ventile in pripravi za naslednji premik
+            stopKnifeCylinder();
+            delay(50);  // Kratka zakasnitev za stabilizacijo
             // Takoj začni premik VEN
             moveKnifeOut();
         }
@@ -207,9 +248,18 @@ void BrusOutputs::update() {
         // Premaknemo se VEN - čakamo na senzor OUT
         if (inputs->isKnifeOut()) {
             Serial.println("   -> Cilinder: Dosežen končni položaj VEN");
+            // Ustavi ventile in pripravi za naslednji premik
+            stopKnifeCylinder();
+            delay(50);  // Kratka zakasnitev za stabilizacijo
             // Takoj začni premik NOTER
             moveKnifeIn();
         }
+    }
+    else if (knifeCylinderState == KNIFE_STOPPED && knifePusherOn) {
+        // Če je ustavljen, ampak naj bi bil aktiven, začni oscilacijo
+        // To se zgodi na začetku ali po napaki
+        Serial.println("   -> Cilinder: Ponovno zaganjam oscilacijo");
+        moveKnifeIn();
     }
 }
 

@@ -87,6 +87,10 @@ bool anglesChanged = false;  // Ali so se koti spremenili (za aktivacijo bSave)
 static int16_t receivedID5 = -1;  // xStopAngle × 10
 static int16_t receivedID6 = -1;  // xStartAngle × 10
 
+// Cache za periodične update-e na displayu (da ne pošiljamo istih ukazov večkrat)
+String lastStatusPg2Cache = "";    // Za tStatus_pg2 na page2
+String lastPomikStatusCache = "";  // Za tPomik na page2/page3
+
 // Flags za opozorila
 bool autoModeWarningShown = false;  // Za prikaz NAPAKA: Koti niso nastavljeni samo enkrat
 bool safeModeStatusShown = false;   // Za prikaz safe mode statusa samo enkrat
@@ -1116,17 +1120,24 @@ void loop() {
     // Posodobi tStatus_pg2 - status motorja in sporočila
     // Preveri in omogoči/onemogoči bPnev glede na kot
     float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
+    
     if (anglesCalibrated) {
       bool inRange = (currentAngle >= calibratedMinAngle && currentAngle <= calibratedMaxAngle);
       display.setButtonState("bPnev", inRange);
       
-      // Posodobi status če je izven mej
+      // Posodobi status če je izven mej (pošlji samo ob spremembi)
+      String newStatus = "";
       if (currentAngle < calibratedMinAngle) {
-        display.setText("tStatus_pg2", "OPOZORILO: Kot < MIN!");
+        newStatus = "OPOZORILO: Kot < MIN!";
       } else if (currentAngle > calibratedMaxAngle) {
-        display.setText("tStatus_pg2", "OPOZORILO: Kot > MAX!");
+        newStatus = "OPOZORILO: Kot > MAX!";
       } else if (!outputs.isSpindleMoving() && !outputs.isGrindingMotorOn() && !outputs.isKnifePusherOn()) {
-        display.setText("tStatus_pg2", "Ročni način - uporabite tipke ali gumbe");
+        newStatus = "Rocni nacin - uporabite tipke ali gumbe";
+      }
+      
+      if (newStatus != "" && newStatus != lastStatusPg2Cache) {
+        display.setText("tStatus_pg2", newStatus.c_str());
+        lastStatusPg2Cache = newStatus;
       }
     } else {
       // Ni kalibracije - bPnev vedno omogočen
@@ -1134,23 +1145,47 @@ void loop() {
     }
   }
   
-  // Posodobi tPomik na page2 (pgModeMAN) in page3 (pgModeAUTO) vsake 0.5s
+  // Posodobi tPomik na page2 (pgModeMAN) in page3 (pgModeAUTO) vsake 0.2s
   static unsigned long lastPageUpdate = 0;
-  if ((currentPage == 2 || currentPage == 3) && (currentMillis - lastPageUpdate >= 500)) {
+  if ((currentPage == 2 || currentPage == 3) && (currentMillis - lastPageUpdate >= 200)) {
     lastPageUpdate = currentMillis;
     
     // Posodobi tPomik - status motorja vretena (obstaja na page2 in page3)
+    String newPomikStatus = "";
+    
     if (outputs.isSpindleMoving()) {
       if (outputs.getSpindleDirection() == SPINDLE_UP) {
-        display.setText("tPomik", "GOR");
-        display.sendRawCommand("tPomik.pco=1024");  // Modra
+        newPomikStatus = "GOR";
+        if (newPomikStatus != lastPomikStatusCache) {
+          display.setText("tPomik", "GOR");
+          display.sendRawCommand("tPomik.pco=1024");  // Zelena
+          // Prikažemo tudi na gumbu bGor, kot da je pritisnjen
+          display.sendRawCommand("bGor.pco=65535");  // Bela (pritisnjen)
+          display.sendRawCommand("bGor.bco=1024"); // Zelena (pritisnjen)
+          lastPomikStatusCache = newPomikStatus;
+        }
       } else {
-        display.setText("tPomik", "DOL");
-        display.sendRawCommand("tPomik.pco=1024");  // Modra
+        newPomikStatus = "DOL";
+        if (newPomikStatus != lastPomikStatusCache) {
+          display.setText("tPomik", "DOL");
+          display.sendRawCommand("tPomik.pco=1024");  // Zelena
+          lastPomikStatusCache = newPomikStatus;
+          display.sendRawCommand("bDol.pco=65535");  // Bela (pritisnjen)
+          display.sendRawCommand("bDol.bco=1024"); // Zelena (pritisnjen)
+        }
       }
     } else {
-      display.setText("tPomik", "STOP");
-      display.sendRawCommand("tPomik.pco=63488");  // Rdeča
+      newPomikStatus = "STOP";
+      if (newPomikStatus != lastPomikStatusCache) {
+        display.setText("tPomik", "STOP");
+        display.sendRawCommand("tPomik.pco=63488");  // Rdeča
+        lastPomikStatusCache = newPomikStatus;
+        // Resetiraj gumb bGor in bDol na normalno barvo
+        display.sendRawCommand("bGor.pco=31");  // Modra (normalno)
+        display.sendRawCommand("bGor.bco=50712"); // Siva (normalno)
+        display.sendRawCommand("bDol.pco=31");  // Modra (normalno)
+        display.sendRawCommand("bDol.bco=50712"); // Siva (normalno)
+      }
     }
     
     // Posodobi ostale podatke samo na page3 (pgModeAUTO)
@@ -1509,7 +1544,7 @@ void loop() {
         
         // Prikaz kota iz AS5600 (če je prisoten)
         if (inputs.getAngleEncoder() != nullptr && inputs.getAngleEncoder()->isSensorPresent()) {
-          float angle = inputs.getSpindleAngle();
+          float angle = angleSensor.getCalibratedAngle(as5600AngleOffset);
           Serial.print("| Angle: ");
           Serial.print(angle, 1);
           Serial.print("° ");
@@ -2369,6 +2404,10 @@ void handlePageChange(uint8_t newPage) {
   // Resetiraj xFloat cache ob spremembi strani
   resetXFloatCache();
   
+  // Resetiraj tudi cache za periodične update-e (da se ponovno pošljejo ukazi)
+  lastStatusPg2Cache = "";
+  lastPomikStatusCache = "";
+  
   currentPage = newPage;
   display.setCurrentPage(newPage);  // Posodobi tudi v NextionDisplay
   
@@ -2443,9 +2482,9 @@ void handlePageChange(uint8_t newPage) {
       
       // Preveri pogoje in nastavi statusno sporočilo
       if (!anglesCalibrated) {
-        display.setText("tStatus_pg2", "OPOZORILO: Ni referenčnega hoda!");
+        display.setText("tStatus_pg2", "OPOZORILO: Ni referencnega hoda!");
       } else {
-        display.setText("tStatus_pg2", "Ročni način - uporabite tipke ali gumbe");
+        display.setText("tStatus_pg2", "Rocni nacin - uporabite tipke ali gumbe");
       }
       break;
     }

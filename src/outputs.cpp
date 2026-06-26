@@ -8,6 +8,8 @@ BrusOutputs::BrusOutputs() {
     spindleSpeed = 0;
     spindleDir = SPINDLE_DOWN;
     spindleMoving = false;
+    lastSpindleSpeed = 255;  // Neveljavna vrednost da se prvi izpis zagotovo zgodi
+    lastSpindleDir = SPINDLE_DOWN;
     knifeCylinderState = KNIFE_STOPPED;
     knifeMoveStartTime = 0;
     knifeCylinderError = false;
@@ -94,10 +96,6 @@ void BrusOutputs::setSpindleSpeed(uint8_t speed) {
     ledcWrite(PWM_CHANNEL_SPINDLE, speed);
     
     spindleMoving = (speed > 0);
-    
-    if (!spindleMoving) {
-        Serial.println(">> Vreteno USTAVLJENO");
-    }
 }
 
 void BrusOutputs::setSpindleDirection(SpindleDirection dir) {
@@ -108,19 +106,37 @@ void BrusOutputs::setSpindleDirection(SpindleDirection dir) {
 void BrusOutputs::moveSpindleUp(uint8_t speed) {
     setSpindleDirection(SPINDLE_UP);
     setSpindleSpeed(speed);
-    Serial.print(">> Vreteno GOR, hitrost: ");
-    Serial.println(speed);
+    
+    // Izpiši samo ob spremembi hitrosti ali smeri
+    if (speed != lastSpindleSpeed || SPINDLE_UP != lastSpindleDir) {
+        Serial.print(">> Vreteno GOR, hitrost: ");
+        Serial.println(speed);
+        lastSpindleSpeed = speed;
+        lastSpindleDir = SPINDLE_UP;
+    }
 }
 
 void BrusOutputs::moveSpindleDown(uint8_t speed) {
     setSpindleDirection(SPINDLE_DOWN);
     setSpindleSpeed(speed);
-    Serial.print(">> Vreteno DOL, hitrost: ");
-    Serial.println(speed);
+    
+    // Izpiši samo ob spremembi hitrosti ali smeri
+    if (speed != lastSpindleSpeed || SPINDLE_DOWN != lastSpindleDir) {
+        Serial.print(">> Vreteno DOL, hitrost: ");
+        Serial.println(speed);
+        lastSpindleSpeed = speed;
+        lastSpindleDir = SPINDLE_DOWN;
+    }
 }
 
 void BrusOutputs::stopSpindle() {
     setSpindleSpeed(0);
+    
+    // Izpiši samo če se je hitrost spremenila (torej če je bilo vreteno v gibanju)
+    if (lastSpindleSpeed != 0) {
+        Serial.println(">> Vreteno USTAVLJENO");
+        lastSpindleSpeed = 0;
+    }
 }
 
 // ===== KONTROLA CILINDRA NOŽA =====

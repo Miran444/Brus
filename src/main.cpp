@@ -91,6 +91,17 @@ static int16_t receivedID6 = -1;  // xStartAngle × 10
 String lastStatusPg2Cache = "";    // Za tStatus_pg2 na page2
 String lastPomikStatusCache = "";  // Za tPomik na page2/page3
 
+// Cache za page3 (pgModeAUTO)
+String lastCikliText = "";         // Za tCikli
+String lastKamenText = "";         // Za tKamen
+String lastCilinderText = "";      // Za tCilinder
+String lastStatusPg3 = "";         // Za tStatus_pg3
+String lastBStartText = "";        // Za bStart (START/STOP)
+bool lastBStartEnabled = true;     // Za bStart enable/disable
+
+// Sistem ready flag - postane true ko Nextion pošlje prvi PAGE event za page1
+bool systemReady = false;
+
 // Flags za opozorila
 bool autoModeWarningShown = false;  // Za prikaz NAPAKA: Koti niso nastavljeni samo enkrat
 bool safeModeStatusShown = false;   // Za prikaz safe mode statusa samo enkrat
@@ -623,6 +634,10 @@ void handleTouchPress(uint8_t componentId) {
           display.setText("bStart", "START");
           display.setText("tStatus_pg3", "Cikel ustavljen");
           
+          // Resetiraj cache da se omogočijo nadaljnja posodabljanja
+          lastBStartText = "START";
+          lastStatusPg3 = "Cikel ustavljen";
+          
           // Posodobi bStart omogočenost
           updateAutoModeReadiness();
           break;
@@ -668,6 +683,10 @@ void handleTouchPress(uint8_t componentId) {
         
         display.setText("bStart", "STOP");
         display.setText("tStatus_pg3", "AUTO cikel zagnan!");
+        
+        // Resetiraj cache da se omogočijo nadaljnja posodabljanja
+        lastBStartText = "STOP";
+        lastStatusPg3 = "AUTO cikel zagnan!";
         break;
       }
         
@@ -865,11 +884,13 @@ void handleTouchPress(uint8_t componentId) {
         if (!anglesCalibrated) {
           Serial.println("[bStart] NAPAKA: Ni kalibracije!");
           display.setText("tStatus_pg3", "NAPAKA: Ni kalibracije!");
+          lastStatusPg3 = "NAPAKA: Ni kalibracije!";
           return;
         }
         if (!anglesConfigured) {
           Serial.println("[bStart] NAPAKA: Ni nastavljenih kotov!");
           display.setText("tStatus_pg3", "NAPAKA: Ni kotov!");
+          lastStatusPg3 = "NAPAKA: Ni kotov!";
           return;
         }
         
@@ -878,6 +899,7 @@ void handleTouchPress(uint8_t componentId) {
         if (currentAngle < calibratedMinAngle || currentAngle > calibratedMaxAngle) {
           Serial.println("[bStart] NAPAKA: Kot izven mej!");
           display.setText("tStatus_pg3", "NAPAKA: Pozicioniraj vreteno!");
+          lastStatusPg3 = "NAPAKA: Pozicioniraj vreteno!";
           return;
         }
         
@@ -885,6 +907,7 @@ void handleTouchPress(uint8_t componentId) {
         if (cycles == CYCLES_NONE) {
           Serial.println("[bStart] NAPAKA: S2 ni nastavljen!");
           display.setText("tStatus_pg3", "NAPAKA: Nastavi S2!");
+          lastStatusPg3 = "NAPAKA: Nastavi S2!";
           return;
         }
         
@@ -900,6 +923,7 @@ void handleTouchPress(uint8_t componentId) {
         autoModeActive = true;
         
         display.setText("tStatus_pg3", "AUTO cikel zagnan!");
+        lastStatusPg3 = "AUTO cikel zagnan!";
         break;
       }
         
@@ -998,6 +1022,7 @@ void loop() {
     
     // Resetiraj stanje - stroj se obnaša kot da se je zagnal na novo
     currentPage = 0;
+    systemReady = false;  // Počakaj na nov PAGE event za stran 1
     
     // Počisti startup flag
     display.clearStartupFlag();
@@ -1055,29 +1080,32 @@ void loop() {
   }
   
   // ===== S1 MODE TRACKING - Avtomatski preklop med pgModeOFF/MAN/AUTO =====
-  S1Mode currentS1Mode = inputs.getS1Mode();
-  if (currentS1Mode != lastS1Mode) {
-    // S1 stikalo se je spremenilo
-    Serial.print("[S1] Sprememba: ");
-    if (currentS1Mode == MODE_OFF) Serial.println("OFF");
-    else if (currentS1Mode == MODE_MANUAL) Serial.println("MANUAL");
-    else if (currentS1Mode == MODE_AUTO) Serial.println("AUTO");
-    
-    // Preklopi na ustrezno stran samo če smo na eni od mode strani (1,2,3)
-    if (currentPage >= 1 && currentPage <= 3) {
-      if (currentS1Mode == MODE_OFF && currentPage != 1) {
-        Serial.println("  -> Preklop na pgModeOFF");
-        display.showPage(1);
-      } else if (currentS1Mode == MODE_MANUAL && currentPage != 2) {
-        Serial.println("  -> Preklop na pgModeMAN");
-        display.showPage(2);
-      } else if (currentS1Mode == MODE_AUTO && currentPage != 3) {
-        Serial.println("  -> Preklop na pgModeAUTO");
-        display.showPage(3);
+  // POMEMBNO: Izvede se samo če je sistem pripravljen (Nextion je poslal prvi PAGE event)
+  if (systemReady) {
+    S1Mode currentS1Mode = inputs.getS1Mode();
+    if (currentS1Mode != lastS1Mode) {
+      // S1 stikalo se je spremenilo
+      Serial.print("[S1] Sprememba: ");
+      if (currentS1Mode == MODE_OFF) Serial.println("OFF");
+      else if (currentS1Mode == MODE_MANUAL) Serial.println("MANUAL");
+      else if (currentS1Mode == MODE_AUTO) Serial.println("AUTO");
+      
+      // Preklopi na ustrezno stran samo če smo na eni od mode strani (1,2,3)
+      if (currentPage >= 1 && currentPage <= 3) {
+        if (currentS1Mode == MODE_OFF && currentPage != 1) {
+          Serial.println("  -> Preklop na pgModeOFF");
+          display.showPage(1);
+        } else if (currentS1Mode == MODE_MANUAL && currentPage != 2) {
+          Serial.println("  -> Preklop na pgModeMAN");
+          display.showPage(2);
+        } else if (currentS1Mode == MODE_AUTO && currentPage != 3) {
+          Serial.println("  -> Preklop na pgModeAUTO");
+          display.showPage(3);
+        }
       }
+      
+      lastS1Mode = currentS1Mode;
     }
-    
-    lastS1Mode = currentS1Mode;
   }
   
   // Posodobi vhode
@@ -1159,9 +1187,11 @@ void loop() {
         if (newPomikStatus != lastPomikStatusCache) {
           display.setText("tPomik", "GOR");
           display.sendRawCommand("tPomik.pco=1024");  // Zelena
-          // Prikažemo tudi na gumbu bGor, kot da je pritisnjen
-          display.sendRawCommand("bGor.pco=65535");  // Bela (pritisnjen)
-          display.sendRawCommand("bGor.bco=1024"); // Zelena (pritisnjen)
+          // Prikažemo tudi na gumbu bGor, kot da je pritisnjen (SAMO na page2)
+          if (currentPage == 2) {
+            display.sendRawCommand("bGor.pco=65535");  // Bela (pritisnjen)
+            display.sendRawCommand("bGor.bco=1024"); // Zelena (pritisnjen)
+          }
           lastPomikStatusCache = newPomikStatus;
         }
       } else {
@@ -1170,8 +1200,11 @@ void loop() {
           display.setText("tPomik", "DOL");
           display.sendRawCommand("tPomik.pco=1024");  // Zelena
           lastPomikStatusCache = newPomikStatus;
-          display.sendRawCommand("bDol.pco=65535");  // Bela (pritisnjen)
-          display.sendRawCommand("bDol.bco=1024"); // Zelena (pritisnjen)
+          // Prikažemo tudi na gumbu bDol, kot da je pritisnjen (SAMO na page2)
+          if (currentPage == 2) {
+            display.sendRawCommand("bDol.pco=65535");  // Bela (pritisnjen)
+            display.sendRawCommand("bDol.bco=1024"); // Zelena (pritisnjen)
+          }
         }
       }
     } else {
@@ -1180,11 +1213,13 @@ void loop() {
         display.setText("tPomik", "STOP");
         display.sendRawCommand("tPomik.pco=63488");  // Rdeča
         lastPomikStatusCache = newPomikStatus;
-        // Resetiraj gumb bGor in bDol na normalno barvo
-        display.sendRawCommand("bGor.pco=31");  // Modra (normalno)
-        display.sendRawCommand("bGor.bco=50712"); // Siva (normalno)
-        display.sendRawCommand("bDol.pco=31");  // Modra (normalno)
-        display.sendRawCommand("bDol.bco=50712"); // Siva (normalno)
+        // Resetiraj gumb bGor in bDol na normalno barvo (SAMO na page2)
+        if (currentPage == 2) {
+          display.sendRawCommand("bGor.pco=31");  // Modra (normalno)
+          display.sendRawCommand("bGor.bco=50712"); // Siva (normalno)
+          display.sendRawCommand("bDol.pco=31");  // Modra (normalno)
+          display.sendRawCommand("bDol.bco=50712"); // Siva (normalno)
+        }
       }
     }
     
@@ -1198,38 +1233,63 @@ void loop() {
       } else {
         sprintf(cikliText, "%d/%d", autoCycle.getCompletedCycles(), (int)cycles);
       }
-      display.setText("tCikli", cikliText);
+      if (lastCikliText != String(cikliText)) {
+        display.setText("tCikli", cikliText);
+        lastCikliText = String(cikliText);
+      }
     
       // Posodobi tKamen - status brusnega kamna
+      String kamenText;
       if (outputs.isGrindingMotorOn()) {
-        display.setText("tKamen", "RUN");
-        display.sendRawCommand("tKamen.pco=1024");  // Modra
+        kamenText = "RUN";
+        if (lastKamenText != kamenText) {
+          display.setText("tKamen", "RUN");
+          display.sendRawCommand("tKamen.pco=1024");  // Modra
+          lastKamenText = kamenText;
+        }
       } else {
-        display.setText("tKamen", "STOP");
-        display.sendRawCommand("tKamen.pco=63488");  // Rdeča
+        kamenText = "STOP";
+        if (lastKamenText != kamenText) {
+          display.setText("tKamen", "STOP");
+          display.sendRawCommand("tKamen.pco=63488");  // Rdeča
+          lastKamenText = kamenText;
+        }
       }
       
       // Posodobi tCilinder - status pnevmatskega cilindra
       BrusOutputs::KnifeCylinderState cylinderState = outputs.getKnifeCylinderState();
+      String cilinderText;
       if (cylinderState == BrusOutputs::KNIFE_MOVING_OUT) {
-        display.setText("tCilinder", "OUT");
-        display.sendRawCommand("tCilinder.pco=1024");  // Modra
+        cilinderText = "OUT";
+        if (lastCilinderText != cilinderText) {
+          display.setText("tCilinder", "OUT");
+          display.sendRawCommand("tCilinder.pco=1024");  // Modra
+          lastCilinderText = cilinderText;
+        }
       } else if (cylinderState == BrusOutputs::KNIFE_MOVING_IN) {
-        display.setText("tCilinder", "IN");
-        display.sendRawCommand("tCilinder.pco=1024");  // Modra
+        cilinderText = "IN";
+        if (lastCilinderText != cilinderText) {
+          display.setText("tCilinder", "IN");
+          display.sendRawCommand("tCilinder.pco=1024");  // Modra
+          lastCilinderText = cilinderText;
+        }
       } else {
-        display.setText("tCilinder", "STOP");
-        display.sendRawCommand("tCilinder.pco=63488");  // Rdeča
+        cilinderText = "STOP";
+        if (lastCilinderText != cilinderText) {
+          display.setText("tCilinder", "STOP");
+          display.sendRawCommand("tCilinder.pco=63488");  // Rdeča
+          lastCilinderText = cilinderText;
+        }
       }
       
       // Preveri pogoje za bStart in posodobi tStatus_pg3
       updateAutoModeReadiness();
       
       // Posodobi tekst gumba bStart glede na stanje cikla
-      if (autoCycle.isRunning()) {
-        display.setText("bStart", "STOP");
-      } else {
-        display.setText("bStart", "START");
+      String bStartText = autoCycle.isRunning() ? "STOP" : "START";
+      if (lastBStartText != bStartText) {
+        display.setText("bStart", bStartText.c_str());
+        lastBStartText = bStartText;
       }
     }
   }
@@ -1297,8 +1357,9 @@ void loop() {
   // Trenutni način delovanja
   S1Mode mode = inputs.getS1Mode();
   
-  // Detekcija spremembe načina
-  if (mode != lastMode) {
+  // Detekcija spremembe načina - SAMO ČE JE SISTEM PRIPRAVLJEN
+  // Prepreči lažno detekcijo spremembe ob zagonu ko je S1 že nastavljeno
+  if (systemReady && mode != lastMode) {
     Serial.print("Sprememba načina: ");
     if (mode == MODE_OFF) Serial.println("OFF");
     else if (mode == MODE_MANUAL) Serial.println("MANUAL");
@@ -1328,13 +1389,16 @@ void loop() {
     // Ob preklopu v AUTO način
     if (mode == MODE_AUTO && lastMode != MODE_AUTO) {
       // Če nismo na page3 (pgModeAUTO), pojdi na page3
-      if (currentPage != 3) {
+      // POMEMBNO: Samo če je sistem pripravljen (po PAGE event za stran 1)
+      if (currentPage != 3 && systemReady) {
         Serial.println("[MODE_AUTO] Preklop na page3 (pgModeAUTO)");
         display.showPage(3);
         currentPage = 3;
       }
       // Posodobi bStart gumb glede na pripravljenost
-      updateAutoModeReadiness();
+      if (systemReady) {
+        updateAutoModeReadiness();
+      }
     }
     
     lastMode = mode;
@@ -1453,7 +1517,7 @@ void loop() {
         }
         else {
           // S2 ni nastavljen na veljavno pozicijo
-          Serial.println("OPOZORILO: Nastavite število ciklov na S2!");
+          // Opozorilo se prikaže že na displayu preko updateAutoModeReadiness()
         }
       }
     }
@@ -2145,6 +2209,23 @@ void updateAutoModeReadiness() {
   // Funkcija se uporablja samo za page3
   if (currentPage != 3) return;
   
+  // ČE JE CIKEL ŽE AKTIVEN, ne posodabljaj statusa
+  // (avtomatski cikel sam upravlja svoj status preko display->setStatus())
+  if (autoCycle.isRunning()) {
+    // Omogoči gumb bStart (da lahko uporabnik klikne STOP)
+    if (lastBStartEnabled != true) {
+      display.setButtonState("bStart", true);
+      lastBStartEnabled = true;
+    }
+    // Posodobi tekst gumba bStart
+    String bStartText = "STOP";
+    if (lastBStartText != bStartText) {
+      display.setText("bStart", bStartText.c_str());
+      lastBStartText = bStartText;
+    }
+    return;  // Ne posodabljaj statusa!
+  }
+  
   bool ready = true;
   String status = "";
   
@@ -2172,18 +2253,21 @@ void updateAutoModeReadiness() {
       if (cycles == CYCLES_NONE) {
         ready = false;
         status = "Nastavi S2 stikalo (cikli)!";
-      } else if (autoCycle.isRunning()) {
-        ready = false;
-        status = "Avtomatski cikel v teku...";
       } else {
         status = "Pripravljeno - pritisnite START";
       }
     }
   }
   
-  // Posodobi gumb in status na page3
-  display.setButtonState("bStart", ready);
-  display.setText("tStatus_pg3", status.c_str());
+  // Posodobi gumb in status samo ob spremembi
+  if (lastBStartEnabled != ready) {
+    display.setButtonState("bStart", ready);
+    lastBStartEnabled = ready;
+  }
+  if (lastStatusPg3 != status) {
+    display.setText("tStatus_pg3", status.c_str());
+    lastStatusPg3 = status;
+  }
 }
 
 // ===== FUNKCIJE ZA REFERENČNI HOD (PAGE 3) =====
@@ -2408,6 +2492,14 @@ void handlePageChange(uint8_t newPage) {
   lastStatusPg2Cache = "";
   lastPomikStatusCache = "";
   
+  // Resetiraj page3 cache
+  lastCikliText = "";
+  lastKamenText = "";
+  lastCilinderText = "";
+  lastStatusPg3 = "";
+  lastBStartText = "";
+  lastBStartEnabled = true;
+  
   currentPage = newPage;
   display.setCurrentPage(newPage);  // Posodobi tudi v NextionDisplay
   
@@ -2429,6 +2521,12 @@ void handlePageChange(uint8_t newPage) {
       
     case 1: { // pgModeOFF
       Serial.println("  -> pgModeOFF (osnovna stran)");
+      
+      // Nastavi systemReady flag - sistem je pripravljen za S1 mode tracking
+      if (!systemReady) {
+        systemReady = true;
+        Serial.println("  -> Sistem READY - S1 mode tracking omogočen");
+      }
       
       // Najprej pošlji trenutni kot xAngle (ostala xFloat polja se naložijo iz globalnih spr.)
       float displayAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
@@ -2452,6 +2550,7 @@ void handlePageChange(uint8_t newPage) {
       // Preveri S1 stikalo in preklopi če je potrebno
       S1Mode mode = inputs.getS1Mode();
       lastS1Mode = mode;
+      lastMode = mode;  // Nastavi tudi lastMode, da prepreči dvojni preklop v loop()
       
       if (mode == MODE_MANUAL) {
         Serial.println("  -> S1 = MANUAL, preklop na pgModeMAN");

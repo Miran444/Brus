@@ -27,6 +27,10 @@ private:
     SpindleDirection spindleDir;
     bool spindleMoving;
     
+    // Cache za izpis vretena (preverjanje sprememb)
+    uint8_t lastSpindleSpeed;
+    SpindleDirection lastSpindleDir;
+    
     // Kontrola cilindra noža
     KnifeCylinderState knifeCylinderState;
     unsigned long knifeMoveStartTime;

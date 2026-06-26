@@ -117,6 +117,8 @@ enum CycleState {
 #define AUTO_SPINDLE_SPEED      180     // Hitrost vretena v avtomatskem načinu (DEPRECATED - use speedZacetni/Sredina/Koncni)
 #define STARTUP_DELAY_MS        2000    // Zakasnitev za vklop motorja kamna (2 sekunde)
 #define KNIFE_MOUNT_TOLERANCE   1.0     // Toleranca za preverjanje montaže noža (stopinje)
+#define MOVE_TO_START_TOLERANCE 0.4     // Toleranca za doseg začetnega kota (stopinje)
+#define SPINDLE_MOVE_TIMEOUT    20000   // Varnostni timeout za gibanje vretena (20 sekund)
 
 // ===== POWER MONITORING =====
 #define POWER_SENSE_PIN         1       // GPIO1 (ADC1_0) - Meritev napajalne napetosti iz usmernika

@@ -909,20 +909,20 @@ void NextionDisplay::setAngleRange(float angleStart, float angleStop) {
 
 void NextionDisplay::setStatus(const char* status) {
     if (String(status) != lastStatus) {
-        setText("tStatus", status);
+        setText("tStatus_pg3", status);
         lastStatus = String(status);
         
         // Spremeni barvo ozadja glede na stanje
-        if (strcmp(status, "Stop") == 0) {
-            sendCommand("tStatus.bco=63488");  // Rdeča
-        } else if (strcmp(status, "Pripravljen") == 0) {
-            sendCommand("tStatus.bco=1024");   // Modra
-        } else if (strcmp(status, "Run") == 0) {
-            sendCommand("tStatus.bco=2016");   // Zelena
-        } else {
-            // Vse ostalo (vključno z alarm sporočili) = rdeča
-            sendCommand("tStatus.bco=63488");  // Rdeča
-        }
+        // if (strcmp(status, "Stop") == 0) {
+        //     sendCommand("tStatus_pg3.bco=63488");  // Rdeča
+        // } else if (strcmp(status, "Pripravljen") == 0) {
+        //     sendCommand("tStatus_pg3.bco=1024");   // Modra
+        // } else if (strcmp(status, "Run") == 0) {
+        //     sendCommand("tStatus_pg3.bco=2016");   // Zelena
+        // } else {
+        //     // Vse ostalo (vključno z alarm sporočili) = rdeča
+        //     sendCommand("tStatus_pg3.bco=63488");  // Rdeča
+        // }
     }
 }
 

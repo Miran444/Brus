@@ -251,17 +251,17 @@ bool BrusInputs::isResetPressed() {
     return getInputDebounced(IN_RESET);
 }
 
-bool BrusInputs::isS41DownPressed() {
-    // S41 deluje samo v MANUAL načinu
-    if (getS1Mode() == MODE_MANUAL) {
+bool BrusInputs::isS41DownPressed(bool bypassModeCheck) {
+    // S41 deluje samo v MANUAL načinu (razen če bypass)
+    if (bypassModeCheck || getS1Mode() == MODE_MANUAL) {
         return getInputDebounced(IN_S41_DOL);
     }
     return false;
 }
 
-bool BrusInputs::isS42UpPressed() {
-    // S42 deluje samo v MANUAL načinu
-    if (getS1Mode() == MODE_MANUAL) {
+bool BrusInputs::isS42UpPressed(bool bypassModeCheck) {
+    // S42 deluje samo v MANUAL načinu (razen če bypass)
+    if (bypassModeCheck || getS1Mode() == MODE_MANUAL) {
         return getInputDebounced(IN_S42_GOR);
     }
     return false;

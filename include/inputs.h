@@ -48,8 +48,8 @@ public:
     
     // Branje tipk
     bool isResetPressed();
-    bool isS41DownPressed();
-    bool isS42UpPressed();
+    bool isS41DownPressed(bool bypassModeCheck = false);
+    bool isS42UpPressed(bool bypassModeCheck = false);
     
     // Branje senzorjev
     // bool isSpindleTilted();     // Naklon < 10° (AS5600 ali S44)

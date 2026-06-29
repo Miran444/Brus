@@ -74,9 +74,10 @@ S1Mode lastS1Mode = MODE_OFF;
 
 // Page7 (pgAngle) - Nastavitev kotov
 enum AngleSettingMode {
-  ANGLE_IDLE = 0,      // Ni aktivno
-  ANGLE_SET_START = 1, // Nastavljamo začetni kot
-  ANGLE_SET_STOP = 2   // Nastavljamo končni kot
+  ANGLE_IDLE = 0,         // Ni aktivno
+  ANGLE_SET_START = 1,    // Nastavljamo začetni kot
+  ANGLE_SET_STOP = 2,     // Nastavljamo končni kot
+  ANGLE_READY_TO_SAVE = 3 // Koti nastavljeni, pripravljeni za shranitev
 };
 AngleSettingMode angleSettingMode = ANGLE_IDLE;
 float tempAngleStart = 0.0;  // Začasni koti pred shranjevanjem
@@ -789,10 +790,9 @@ void handleTouchPress(uint8_t componentId) {
           Serial.println("[bNastaviKote] Nastavljanje KONČNEGA kota - uporabite tipke S42(Gor)/S41(Dol)");
           display.setText("bNastaviKote", "Koncni");
           updatePage7AngleDisplay();
-          display.setButtonState("bSave", true);
         }
         else if (angleSettingMode == ANGLE_SET_STOP) {
-          // Shrani končni kot in resetiraj
+          // Shrani končni kot in preveri veljavnost
           tempAngleStop = angleSensor.getCalibratedAngle(as5600AngleOffset);
           
           // Validacija: Začetni kot mora biti večji od končnega
@@ -805,6 +805,7 @@ void handleTouchPress(uint8_t componentId) {
             Serial.println("°");
             angleSettingMode = ANGLE_IDLE;
             display.setText("bNastaviKote", "Nastavi");
+            display.setText("tStatus_pg7", "NAPAKA: Začetni > končni!");
             return;
           }
           
@@ -818,6 +819,7 @@ void handleTouchPress(uint8_t componentId) {
               Serial.println("°");
               angleSettingMode = ANGLE_IDLE;
               display.setText("bNastaviKote", "Nastavi");
+              display.setText("tStatus_pg7", "NAPAKA: Presežen max limit!");
               return;
             }
             if (tempAngleStop < calibratedMinAngle) {
@@ -828,20 +830,32 @@ void handleTouchPress(uint8_t componentId) {
               Serial.println("°");
               angleSettingMode = ANGLE_IDLE;
               display.setText("bNastaviKote", "Nastavi");
+              display.setText("tStatus_pg7", "NAPAKA: Presežen min limit!");
               return;
             }
           } else {
             Serial.println("[bNastaviKote] OPOZORILO: Koti niso preverjeni - kalibracija ni opravljena!");
           }
           
-          angleSettingMode = ANGLE_IDLE;
+          // Koti so veljavni - pripravi za shranjevanje
+          angleSettingMode = ANGLE_READY_TO_SAVE;
           anglesChanged = true;
           Serial.print("[bNastaviKote] Končni kot nastavljen: ");
           Serial.print(tempAngleStop, 1);
           Serial.println("°");
-          Serial.println("[bNastaviKote] Nastavitev končana - pritisnite bSave za shranitev");
-          display.setText("bNastaviKote", "Nastavi");
+          Serial.println("[bNastaviKote] Koti pripravljeni - pritisnite bSave za shranitev");
+          display.setText("bNastaviKote", "Potrdi");
+          display.setText("tStatus_pg7", "Pritisnite bSave za shranitev");
+          display.setButtonState("bSave", true);
           updatePage7AngleDisplay();
+        }
+        else if (angleSettingMode == ANGLE_READY_TO_SAVE) {
+          // Četrti pritisk - resetiraj način (če uporabnik še ni shranil)
+          angleSettingMode = ANGLE_IDLE;
+          display.setText("bNastaviKote", "Nastavi");
+          display.setButtonState("bSave", false);
+          display.setText("tStatus_pg7", "Nastavitev preklicana");
+          Serial.println("[bNastaviKote] Nastavitev preklicana");
         }
         break;
         
@@ -1322,20 +1336,18 @@ void loop() {
   }
   
   // Če smo na page7 (pgAngle) in nastavljamo kote, posodabljaj prikaz v realnem času
-  if (currentPage == 7 && angleSettingMode != ANGLE_IDLE) {
+  if (currentPage == 7 && angleSettingMode != ANGLE_IDLE && angleSettingMode != ANGLE_READY_TO_SAVE) {
     float previousAngle = (angleSettingMode == ANGLE_SET_START) ? tempAngleStart : tempAngleStop;
     
     if (angleSettingMode == ANGLE_SET_START) {
       tempAngleStart = angleSensor.getCalibratedAngle(as5600AngleOffset);
       if (abs(tempAngleStart - previousAngle) > 0.1) {  // Sprememba > 0.1°
         anglesChanged = true;
-        display.setButtonState("bSave", true);
       }
     } else if (angleSettingMode == ANGLE_SET_STOP) {
       tempAngleStop = angleSensor.getCalibratedAngle(as5600AngleOffset);
       if (abs(tempAngleStop - previousAngle) > 0.1) {  // Sprememba > 0.1°
         anglesChanged = true;
-        display.setButtonState("bSave", true);
       }
     }
     updatePage7AngleDisplay();
@@ -1365,6 +1377,9 @@ void loop() {
         // Posodobi status če je izven mej
         if (!angleInRange) {
           display.setText("tStatus_pg5", "NAPAKA: Pozicioniraj vreteno med 0-30°!");
+        }
+        else {
+          display.setText("tStatus_pg5", "Pritisni START za referenciranje");
         }
       }
     }
@@ -1431,11 +1446,67 @@ void loop() {
     lastMode = mode;
   }
   
+  // ===== PAGE 7 - NASTAVITEV KOTOV (deluje ne glede na način) =====
+  if (currentPage == 7 && (angleSettingMode == ANGLE_SET_START || angleSettingMode == ANGLE_SET_STOP)) {
+    // Med nastavljanjem kotov - omogoči kontrolo vretena s tipkami S41/S42
+    // Bypass preverjanja načina (true parameter)
+    bool wantMoveDown = inputs.isS41DownPressed(true);
+    bool wantMoveUp = inputs.isS42UpPressed(true);
+    
+    // Posodobi začasni kot med nastavljanjem (real-time feedback)
+    if (angleSettingMode == ANGLE_SET_START) {
+      tempAngleStart = angleSensor.getCalibratedAngle(as5600AngleOffset);
+    } else if (angleSettingMode == ANGLE_SET_STOP) {
+      tempAngleStop = angleSensor.getCalibratedAngle(as5600AngleOffset);
+    }
+    
+    // Varnostna preverjanja limitov (če je kalibracija opravljena)
+    float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
+    if (anglesCalibrated) {
+      if (wantMoveUp && currentAngle >= calibratedMaxAngle) {
+        outputs.stopSpindle();
+        display.setText("tStatus_pg7", "ALARM: Max limit!");
+        Serial.println("ALARM: Dosežen maksimalni limit!");
+        wantMoveUp = false;
+      }
+      if (wantMoveDown && currentAngle <= calibratedMinAngle) {
+        outputs.stopSpindle();
+        display.setText("tStatus_pg7", "ALARM: Min limit!");
+        Serial.println("ALARM: Dosežen minimalni limit!");
+        wantMoveDown = false;
+      }
+    }
+    
+    // Kontrola motorja vretena
+    if (wantMoveDown && !wantMoveUp) {
+      // Premik dol
+      if (!outputs.isSpindleMoving() || outputs.getSpindleDirection() != SPINDLE_DOWN) {
+        uint8_t pwmSpeed = speedToPWM(speedRocno);
+        outputs.moveSpindleDown(pwmSpeed);
+        Serial.println("[PAGE7] Motor vretena DOL");
+      }
+    } 
+    else if (wantMoveUp && !wantMoveDown) {
+      // Premik gor
+      if (!outputs.isSpindleMoving() || outputs.getSpindleDirection() != SPINDLE_UP) {
+        uint8_t pwmSpeed = speedToPWM(speedRocno);
+        outputs.moveSpindleUp(pwmSpeed);
+        Serial.println("[PAGE7] Motor vretena GOR");
+      }
+    } 
+    else {
+      // Nobena tipka ni pritisnjena - ustavi vreteno
+      if (outputs.isSpindleMoving()) {
+        outputs.stopSpindle();
+        Serial.println("[PAGE7] Motor vretena STOP");
+      }
+    }
+  }
+  
   // ===== ROČNI NAČIN =====
   else if (mode == MODE_MANUAL) {
-    // Kontrola vretena - fizične tipke (S41/S42) delujejo na page2 in page7
+    // Kontrola vretena - fizične tipke (S41/S42) delujejo na page2
     // Na page2 (pgModeMAN): fizične tipke IN Nextion gumbi (bGor/bDol)
-    // Na page7 (pgAngle): samo fizične tipke (med nastavljanjem kotov)
     
     bool wantMoveDown = false;
     bool wantMoveUp = false;
@@ -1444,18 +1515,6 @@ void loop() {
       // Page2 (pgModeMAN) - ročno upravljanje - delujejo fizične tipke IN Nextion gumbi
       wantMoveDown = inputs.isS41DownPressed() || bDolPressed;
       wantMoveUp = inputs.isS42UpPressed() || bGorPressed;
-    }
-    else if (currentPage == 7 && (angleSettingMode == ANGLE_SET_START || angleSettingMode == ANGLE_SET_STOP)) {
-      // Page7 (pgAngle) - med nastavljanjem kotov - samo fizične tipke
-      wantMoveDown = inputs.isS41DownPressed();
-      wantMoveUp = inputs.isS42UpPressed();
-      
-      // Posodobi začasni kot med nastavljanjem
-      if (angleSettingMode == ANGLE_SET_START) {
-        tempAngleStart = angleSensor.getCalibratedAngle(as5600AngleOffset);
-      } else if (angleSettingMode == ANGLE_SET_STOP) {
-        tempAngleStop = angleSensor.getCalibratedAngle(as5600AngleOffset);
-      }
     }
     
     // Varnostna preverjanja limitov (če je kalibracija opravljena)
@@ -2192,8 +2251,6 @@ void processSavedAngles() {
   Serial.println("[ANGLE] Koti shranjeni v NVS");
   
   // Posodobi globalne spremenljivke na pgModeOFF (format × 10)
-  setXFloatValue("pgModeOFF.xStartAngle", savedAngleStart);
-  setXFloatValue("pgModeOFF.xStopAngle", savedAngleStop);
   display.setNumber("pgModeOFF.gStartAngle", (int32_t)(savedAngleStart * 10));
   display.setNumber("pgModeOFF.gStopAngle", (int32_t)(savedAngleStop * 10));
   
@@ -2203,11 +2260,16 @@ void processSavedAngles() {
     tempAngleStop = savedAngleStop;
     updatePage7AngleDisplay();
     
-    // Deaktiviraj bSave in resetiraj način
+    // Deaktiviraj bSave, aktiviraj gumb bNastaviKote in resetiraj način
     display.setButtonState("bSave", false);
+    display.setButtonState("bNastaviKote", true);
     angleSettingMode = ANGLE_IDLE;
     updateBNastaviKoteText();
     
+    // Prečitaj trenutni kot in ga prikaži na page7 (xCurrentAngle)
+    float currentAngle = angleSensor.getCalibratedAngle(as5600AngleOffset);
+    setXFloatValue("xAngle", currentAngle);
+
     // Status
     display.setText("tStatus_pg7", "Koti shranjeni!");
   }

@@ -284,9 +284,8 @@ void BrusOutputs::emergencyStop() {
     Serial.println("!!! EMERGENCY STOP !!!");
     
     // Izklop VSEH izhodov
-    setGrindingMotor(false);
+    setGrindingMotor(false);  // Tudi izklopi črpalko
     setKnifePusher(false);
-    setWaterPump(false);
     stopSpindle();
 }
 

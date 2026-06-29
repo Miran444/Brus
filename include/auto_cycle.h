@@ -34,6 +34,7 @@ private:
     uint8_t speedZacetni;           // Faza 1: Start do Start-2.0°
     uint8_t speedSredina;           // Faza 2: Start-2.0° do Stop+2.0°
     uint8_t speedKoncni;            // Faza 3: Stop+2.0° do Stop
+    uint8_t lastSpeedPercent;       // Cache za prikaz hitrosti na display
     
     // Helper funkcije
     uint8_t speedToPWM(uint8_t percent);

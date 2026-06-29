@@ -14,6 +14,7 @@ AutoCycle::AutoCycle(BrusInputs* inp, BrusOutputs* out, AS5600* sensor, NextionD
     startRevolutions = 0;
     errorOccurred = false;
     tiltReached = false;
+    lastSpeedPercent = 255;  // Neveljavna vrednost za prvi prikaz
     angleStart = 0.0;
     angleStop = 0.0;
     calibratedMin = 0.0;
@@ -37,8 +38,9 @@ void AutoCycle::start(uint8_t cycles, float angleStart, float angleStop,
             Serial.print(angleStart);
             Serial.print(" presega maksimalni limit ");
             Serial.println(calibratedMax);
-            enterState(CYCLE_ERROR);
             errorMessage = "Start>Max";
+            errorOccurred = true;
+            enterState(CYCLE_ERROR);
             return;
         }
         if (angleStop < calibratedMin) {
@@ -46,8 +48,9 @@ void AutoCycle::start(uint8_t cycles, float angleStart, float angleStop,
             Serial.print(angleStop);
             Serial.print(" presega minimalni limit ");
             Serial.println(calibratedMin);
-            enterState(CYCLE_ERROR);
             errorMessage = "Stop<Min";
+            errorOccurred = true;
+            enterState(CYCLE_ERROR);
             return;
         }
         Serial.println("[AutoCycle] Koti preverjeni - znotraj limitov");
@@ -176,6 +179,7 @@ void AutoCycle::processStateCheckKnife() {
         Serial.println("°]");
         
         errorMessage = "Noz ni montiran!";
+        errorOccurred = true;
         display->setStatus("NAPAKA: Montiraj nož!");
         enterState(CYCLE_ERROR);
         return;
@@ -233,6 +237,7 @@ void AutoCycle::processStateMoveToStart() {
     if (millis() - stateStartTime > 30000) {
         outputs->stopSpindle();
         errorMessage = "Timeout: premik v start";
+        errorOccurred = true;
         enterState(CYCLE_ERROR);
     }
 }
@@ -271,6 +276,7 @@ void AutoCycle::processStateDown() {
     if (outputs->hasKnifeCylinderError()) {
         outputs->stopSpindle();
         errorMessage = outputs->getKnifeCylinderError();
+        errorOccurred = true;  // KRITIČNO: Nastavi flag za ERROR stanje!
         enterState(CYCLE_ERROR);
         return;
     }
@@ -306,7 +312,11 @@ void AutoCycle::processStateDown() {
             char msg[50];
             sprintf(msg, "Faza: Spust 1/3");
             display->setStatus(msg);
-            display->setNumber("nSpeed", speedZacetni);  // Prikaži hitrost v %
+            // Prikaži hitrost samo ob spremembi
+            if (speedZacetni != lastSpeedPercent) {
+                display->setNumber("nSpeed", speedZacetni);
+                lastSpeedPercent = speedZacetni;
+            }
             lastDisplayUpdate = millis();
         }
     }
@@ -322,7 +332,11 @@ void AutoCycle::processStateDown() {
             char msg[50];
             sprintf(msg, "Faza: Spust 2/3");
             display->setStatus(msg);
-            display->setNumber("nSpeed", speedSredina);  // Prikaži hitrost v %
+            // Prikaži hitrost samo ob spremembi
+            if (speedSredina != lastSpeedPercent) {
+                display->setNumber("nSpeed", speedSredina);
+                lastSpeedPercent = speedSredina;
+            }
             lastDisplayUpdate = millis();
         }
     }
@@ -338,7 +352,11 @@ void AutoCycle::processStateDown() {
             char msg[50];
             sprintf(msg, "Faza: Spust 3/3");
             display->setStatus(msg);
-            display->setNumber("nSpeed", speedKoncni);  // Prikaži hitrost v %
+            // Prikaži hitrost samo ob spremembi
+            if (speedKoncni != lastSpeedPercent) {
+                display->setNumber("nSpeed", speedKoncni);
+                lastSpeedPercent = speedKoncni;
+            }
             lastDisplayUpdate = millis();
         }
     }
@@ -427,6 +445,7 @@ void AutoCycle::processStateUp() {
     if (outputs->hasKnifeCylinderError()) {
         outputs->stopSpindle();
         errorMessage = outputs->getKnifeCylinderError();
+        errorOccurred = true;  // KRITIČNO: Nastavi flag za ERROR stanje!
         enterState(CYCLE_ERROR);
         return;
     }
@@ -458,7 +477,11 @@ void AutoCycle::processStateUp() {
             char msg[50];
             sprintf(msg, "Faza: Dvig 1/3");
             display->setStatus(msg);
-            display->setNumber("nSpeed", speedKoncni);  // Prikaži hitrost v %
+            // Prikaži hitrost samo ob spremembi
+            if (speedKoncni != lastSpeedPercent) {
+                display->setNumber("nSpeed", speedKoncni);
+                lastSpeedPercent = speedKoncni;
+            }
             lastDisplayUpdate = millis();
         }
     }
@@ -474,7 +497,11 @@ void AutoCycle::processStateUp() {
             char msg[50];
             sprintf(msg, "Faza: Dvig 2/3");
             display->setStatus(msg);
-            display->setNumber("nSpeed", speedSredina);  // Prikaži hitrost v %
+            // Prikaži hitrost samo ob spremembi
+            if (speedSredina != lastSpeedPercent) {
+                display->setNumber("nSpeed", speedSredina);
+                lastSpeedPercent = speedSredina;
+            }
             lastDisplayUpdate = millis();
         }
     }
@@ -490,7 +517,11 @@ void AutoCycle::processStateUp() {
             char msg[50];
             sprintf(msg, "Faza: Dvig 3/3");
             display->setStatus(msg);
-            display->setNumber("nSpeed", speedZacetni);  // Prikaži hitrost v %
+            // Prikaži hitrost samo ob spremembi
+            if (speedZacetni != lastSpeedPercent) {
+                display->setNumber("nSpeed", speedZacetni);
+                lastSpeedPercent = speedZacetni;
+            }
             lastDisplayUpdate = millis();
         }
     }
@@ -622,9 +653,12 @@ void AutoCycle::processStateError() {
         
         // Status na display
         display->setStatus(errorMessage.c_str());
+        
+        // Gumb bStart naj prikazuje "RESET"
+        display->setText("bStart", "RESET");
     }
     
-    // Ostani v ERROR stanju dokler ni reset
+    // Ostani v ERROR stanju dokler uporabnik ne pritisne RESET (bStart)
 }
 
 // ===== KONTROLA =====

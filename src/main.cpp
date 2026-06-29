@@ -622,6 +622,26 @@ void handleTouchPress(uint8_t componentId) {
   else if (currentPage == 3) {
     switch(componentId) {
       case 9: { // bStart - začni/ustavi avtomatski cikel
+        // Če je cikel v ERROR stanju, RESET
+        if (autoCycle.hasError()) {
+          Serial.println("========================================");
+          Serial.println("[bStart] RESET PO NAPAKI");
+          Serial.println("========================================");
+          
+          autoCycle.reset();
+          autoModeActive = false;
+          
+          display.setText("bStart", "START");
+          display.setText("tStatus_pg3", "Pripravljeno - pritisnite START");
+          
+          // Resetiraj cache
+          lastBStartText = "START";
+          lastStatusPg3 = "Pripravljeno - pritisnite START";
+          
+          // Ne kliči updateAutoModeReadiness() - vse je že nastavljeno
+          break;
+        }
+        
         // Če je cikel že aktiven, ga ustavi
         if (autoCycle.isRunning()) {
           Serial.println("========================================");
@@ -1286,7 +1306,14 @@ void loop() {
       updateAutoModeReadiness();
       
       // Posodobi tekst gumba bStart glede na stanje cikla
-      String bStartText = autoCycle.isRunning() ? "STOP" : "START";
+      String bStartText;
+      if (autoCycle.hasError()) {
+        bStartText = "RESET";
+      } else if (autoCycle.isRunning()) {
+        bStartText = "STOP";
+      } else {
+        bStartText = "START";
+      }
       if (lastBStartText != bStartText) {
         display.setText("bStart", bStartText.c_str());
         lastBStartText = bStartText;
@@ -1836,10 +1863,10 @@ void setXFloatValue(const char* objName, float value) {
   // Helper funkcija za pošiljanje xFloat vrednosti z avtomatskim nastavitvijo vvs0
   // vvs0 določa število številk pred decimalno vejico, da se izognemo vodilnim ničlam
   
-  // Cache za xFloat objekte - preveri ali se je vrednost spremenila
+  // Cache za xFloat objekte - shranjuje int vrednost (value*10) da preverimo razliko v PRIKAZANI vrednosti
   struct XFloatCache {
     char name[32];
-    float value;
+    int32_t intValue;  // Shrani (value*10) za natančno primerjavo prikazane vrednosti
   };
   static XFloatCache cache[10];  // Max 10 različnih xFloat objektov
   static uint8_t cacheSize = 0;
@@ -1850,6 +1877,9 @@ void setXFloatValue(const char* objName, float value) {
     return;
   }
   
+  // Pretvori v int vrednost (xFloat format *10)
+  int32_t intValue = (int32_t)(value * 10);
+  
   // Išči objekt v cache
   int cacheIndex = -1;
   for (uint8_t i = 0; i < cacheSize; i++) {
@@ -1859,24 +1889,22 @@ void setXFloatValue(const char* objName, float value) {
     }
   }
   
-  // Preveri ali se je vrednost spremenila (>0.1°)
+  // Preveri ali se je prikazana vrednost spremenila
   if (cacheIndex >= 0) {
-    if (abs(value - cache[cacheIndex].value) < 0.1) {
-      return;  // Vrednost se ni spremenila dovolj - ne pošiljaj
+    if (intValue == cache[cacheIndex].intValue) {
+      return;  // Prikazana vrednost se ni spremenila - ne pošiljaj
     }
     // Posodobi cache
-    cache[cacheIndex].value = value;
+    cache[cacheIndex].intValue = intValue;
   } else {
     // Nov objekt - dodaj v cache
     if (cacheSize < 10) {
       strncpy(cache[cacheSize].name, objName, sizeof(cache[cacheSize].name) - 1);
       cache[cacheSize].name[sizeof(cache[cacheSize].name) - 1] = '\0';
-      cache[cacheSize].value = value;
+      cache[cacheSize].intValue = intValue;
       cacheSize++;
     }
   }
-  
-  int32_t intValue = (int32_t)(value * 10);  // xFloat format (*10)
   
   // Določi vvs0 glede na velikost vrednosti
   uint8_t vvs0 = 1;  // Privzeto 1 števka (0-9.9)
@@ -1899,7 +1927,7 @@ void setXFloatValue(const char* objName, float value) {
   Serial.print("[xFloat] ");
   Serial.print(objName);
   Serial.print(" = ");
-  Serial.print(value, 1);
+  Serial.print(value, 2);
   Serial.println("°");
 }
 
@@ -2208,6 +2236,12 @@ void updateAutoModeReadiness() {
   
   // Funkcija se uporablja samo za page3
   if (currentPage != 3) return;
+  
+  // ČE JE CIKEL V ERROR STANJU, ne posodabljaj statusa
+  // (čaka na RESET od uporabnika)
+  if (autoCycle.hasError()) {
+    return;  // Ne posodabljaj ničesar!
+  }
   
   // ČE JE CIKEL ŽE AKTIVEN, ne posodabljaj statusa
   // (avtomatski cikel sam upravlja svoj status preko display->setStatus())
@@ -2609,7 +2643,9 @@ void handlePageChange(uint8_t newPage) {
       display.setText("tCikli", cikliText);
       
       // Nastavi tekst gumba bStart glede na stanje cikla
-      if (autoCycle.isRunning()) {
+      if (autoCycle.hasError()) {
+        display.setText("bStart", "RESET");
+      } else if (autoCycle.isRunning()) {
         display.setText("bStart", "STOP");
       } else {
         display.setText("bStart", "START");
